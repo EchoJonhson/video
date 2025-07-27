@@ -484,3 +484,175 @@ bash inference_fireredasr_aed.sh
 - **生产环境**: 优先使用 AED 模型（速度快、稳定）
 - **最高精度**: 使用 LLM 模型（SOTA性能）
 - **长音频**: 必须使用 AED 模型
+
+## 手动下载 torch.hub 模型指南
+
+### 问题描述
+当遇到网络问题导致 `torch.hub.load()` 失败时（如 "Remote end closed connection without response"），可以手动下载 Silero VAD 模型。
+
+### 方法一：手动下载到 torch.hub 缓存目录
+
+**1. 清理现有缓存**
+```bash
+# 删除损坏的缓存文件
+rm -rf ~/.cache/torch/hub/*
+```
+
+**2. 创建缓存目录结构**
+```bash
+# 创建 torch.hub 目录
+mkdir -p ~/.cache/torch/hub/snakers4_silero-vad_master
+```
+
+**3. 手动下载模型文件**
+```bash
+cd ~/.cache/torch/hub/
+
+# 使用镜像站下载
+wget https://ghproxy.com/https://github.com/snakers4/silero-vad/archive/refs/heads/master.zip
+# 或使用其他镜像
+# wget https://hub.fastgit.org/snakers4/silero-vad/archive/refs/heads/master.zip
+
+# 解压到正确目录
+unzip master.zip
+mv silero-vad-master snakers4_silero-vad_master
+rm master.zip
+```
+
+**4. 下载预训练权重**
+```bash
+cd snakers4_silero-vad_master
+
+# 下载 Silero VAD 模型权重
+wget https://models.silero.ai/models/vad/silero_vad.jit
+# 或从 GitHub Releases 下载
+# wget https://github.com/snakers4/silero-vad/releases/download/v3.1/silero_vad.jit
+```
+
+### 方法二：使用本地模型目录
+
+**1. 创建本地模型目录**
+```bash
+mkdir -p ~/.cache/manual_models/silero-vad
+cd ~/.cache/manual_models
+```
+
+**2. 下载模型仓库**
+```bash
+# 使用国内镜像
+git clone https://ghproxy.com/https://github.com/snakers4/silero-vad.git
+# 或直接下载压缩包
+wget https://ghproxy.com/https://github.com/snakers4/silero-vad/archive/refs/heads/master.zip
+unzip master.zip && mv silero-vad-master silero-vad
+```
+
+**3. 下载模型权重**
+```bash
+cd silero-vad
+
+# 从多个源尝试下载
+wget https://models.silero.ai/models/vad/silero_vad.jit || \
+wget https://github.com/snakers4/silero-vad/releases/download/v3.1/silero_vad.jit || \
+wget https://ghproxy.com/https://github.com/snakers4/silero-vad/releases/download/v3.1/silero_vad.jit
+```
+
+### 方法三：使用代理下载
+
+**1. 配置代理（如果有）**
+```bash
+export http_proxy=http://127.0.0.1:7890
+export https_proxy=http://127.0.0.1:7890
+
+# 清理缓存后重新尝试
+rm -rf ~/.cache/torch/hub/*
+python -c "import torch; torch.hub.load('snakers4/silero-vad', 'silero_vad', force_reload=True)"
+```
+
+### 方法四：使用 conda 安装（推荐）
+
+**1. 通过 conda-forge 安装**
+```bash
+# 激活你的环境
+conda activate speak
+
+# 安装 torchaudio（包含一些预训练模型）
+conda install -c conda-forge torchaudio
+
+# 或使用 pip 安装
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+```
+
+### 验证下载完成
+
+**测试模型加载**
+```bash
+source ~/anaconda3/etc/profile.d/conda.sh
+conda activate speak
+
+python -c "
+import torch
+print('🧪 测试 Silero VAD 模型加载...')
+try:
+    model, utils = torch.hub.load('snakers4/silero-vad', 'silero_vad', force_reload=False)
+    print('✅ 模型加载成功！')
+    print(f'模型类型: {type(model)}')
+    print(f'工具函数: {list(utils)}')
+except Exception as e:
+    print(f'❌ 加载失败: {e}')
+"
+```
+
+### 故障排除
+
+**1. 权限问题**
+```bash
+# 确保缓存目录有写权限
+chmod -R 755 ~/.cache/torch/
+```
+
+**2. 网络超时**
+```bash
+# 增加超时时间
+export TORCH_HUB_TIMEOUT=300
+
+# 或在 Python 中设置
+python -c "
+import torch
+torch.hub._get_cache_or_reload(timeout=300)
+"
+```
+
+**3. 磁盘空间**
+```bash
+# 检查可用空间
+df -h ~/.cache/
+
+# 清理其他缓存
+pip cache purge
+conda clean --all
+```
+
+### 最终验证你的长视频转录
+
+**运行测试**
+```bash
+source ~/anaconda3/etc/profile.d/conda.sh
+conda activate speak
+
+# 使用 echo 提供输入避免交互
+echo -e "y\nn" | python long_video_transcribe.py
+
+# 或直接处理指定文件
+python -c "
+from long_video_transcribe import LongVideoTranscriber
+transcriber = LongVideoTranscriber()
+transcriber.process_long_video('Use/Input/test.mp4')
+"
+```
+
+### 镜像站列表（按可靠性排序）
+
+1. **ghproxy.com** - GitHub 加速代理
+2. **hub.fastgit.org** - FastGit 镜像
+3. **gitee.com/mirrors** - Gitee 镜像
+4. **raw.githubusercontent.com** - 原始文件直链

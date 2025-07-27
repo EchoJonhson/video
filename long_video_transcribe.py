@@ -27,11 +27,16 @@ from datetime import datetime, timedelta
 import time
 import torch
 import torchaudio
+import requests
+import zipfile
 
 # 添加项目路径
 sys.path.insert(0, str(Path(__file__).parent))
 
 from fireredasr.models.fireredasr import FireRedAsr
+from utils.hardware_manager import get_hardware_manager
+from utils.smart_model_loader import create_smart_loader
+from utils.parallel_processor import AudioBatchProcessor
 from fireredasr.utils.video_audio import is_video_file, is_audio_file
 
 
@@ -53,6 +58,22 @@ class LongVideoTranscriber:
         # 支持的格式
         self.supported_video = {'.mp4', '.avi', '.mov', '.mkv', '.flv', '.wmv'}
         self.supported_audio = {'.wav', '.mp3', '.flac', '.m4a', '.aac', '.ogg'}
+        
+        # 初始化智能系统
+        print("🔧 初始化智能处理系统...")
+        self.hardware_manager = get_hardware_manager()
+        self.smart_loader = create_smart_loader(self.hardware_manager)
+        self.parallel_processor = None
+        
+        # 检查环境变量配置
+        force_cpu = os.environ.get('FIREREDASR_FORCE_CPU', '').lower() in ['1', 'true', 'yes']
+        if force_cpu:
+            print("⚠️ 强制使用 CPU 模式 (FIREREDASR_FORCE_CPU=1)")
+            self.hardware_manager.strategy['name'] = 'cpu_primary'
+            self.hardware_manager.strategy['use_gpu'] = False
+        
+        # 打印硬件配置
+        self.hardware_manager.print_hardware_info()
         
     def check_dependencies(self):
         """检查依赖是否安装"""
@@ -117,6 +138,30 @@ class LongVideoTranscriber:
         print("-" * 60)
         return True
     
+    def get_model_dir(self):
+        """根据命令行参数获取模型目录"""
+        if not self.model_type:
+            print("❌ 未指定模型类型，请使用 --model_type 参数")
+            return None
+        
+        if self.model_type == "aed":
+            model_dir = "pretrained_models/FireRedASR-AED-L"
+            print("✅ 使用 FireRedASR-AED 模型 (快速, 适合长音频)")
+        elif self.model_type == "llm":
+            model_dir = "pretrained_models/FireRedASR-LLM-L"
+            print("✅ 使用 FireRedASR-LLM 模型 (高精度, 处理较慢)")
+        else:
+            print(f"❌ 未知模型类型: {self.model_type}")
+            return None
+        
+        # 检查模型路径
+        if not Path(model_dir).exists():
+            print(f"❌ 模型目录不存在: {model_dir}")
+            print("请先下载模型文件，参考 step.md 文档")
+            return None
+        
+        return model_dir
+    
     def select_model(self):
         """让用户选择模型"""
         print("\n🤖 请选择要使用的模型:")
@@ -176,17 +221,49 @@ class LongVideoTranscriber:
     def load_silero_vad(self):
         """加载 Silero VAD 模型"""
         print("🔄 加载 VAD 模型...")
-        model, utils = torch.hub.load(
-            repo_or_dir='snakers4/silero-vad',
-            model='silero_vad',
-            force_reload=False,
-            trust_repo=True
-        )
-        (get_speech_timestamps, save_audio, read_audio, 
-         VADIterator, collect_chunks) = utils
         
-        print("✅ VAD 模型加载成功")
-        return model, get_speech_timestamps, read_audio, save_audio
+        # 方法1: 使用 pip 安装的 silero-vad 包（推荐）
+        try:
+            print("📦 尝试使用 silero-vad 包...")
+            from silero_vad import load_silero_vad, get_speech_timestamps, read_audio
+            
+            model = load_silero_vad()
+            
+            # 创建兼容的 save_audio 函数
+            def save_audio(path, tensor, sampling_rate):
+                torchaudio.save(path, tensor, sampling_rate)
+            
+            print("✅ VAD 模型加载成功 (silero-vad 包)")
+            return model, get_speech_timestamps, read_audio, save_audio
+            
+        except ImportError as e:
+            print(f"❌ silero-vad 包未安装: {e}")
+        except Exception as e:
+            print(f"❌ silero-vad 包加载失败: {str(e)}")
+        
+        # 方法2: 尝试从 torch.hub 加载
+        for attempt in range(2):
+            try:
+                print(f"📁 尝试从 torch.hub 加载 (尝试 {attempt + 1}/2)...")
+                model, utils = torch.hub.load(
+                    repo_or_dir='snakers4/silero-vad',
+                    model='silero_vad',
+                    force_reload=attempt > 0,
+                    trust_repo=True
+                )
+                (get_speech_timestamps, save_audio, read_audio, 
+                 VADIterator, collect_chunks) = utils
+                
+                print("✅ VAD 模型加载成功 (torch.hub)")
+                return model, get_speech_timestamps, read_audio, save_audio
+                
+            except Exception as e:
+                print(f"❌ torch.hub 加载失败 (尝试 {attempt + 1}/2): {str(e)}")
+                if attempt == 0:
+                    time.sleep(3)
+        
+        # 如果所有方法都失败
+        raise Exception("❌ VAD模型加载失败！请确保已安装 silero-vad: pip install silero-vad")
     
     def slice_audio_with_vad(self, audio_path, output_dir):
         """使用 VAD 切分音频"""
@@ -198,15 +275,20 @@ class LongVideoTranscriber:
         # 读取音频
         wav = read_audio(str(audio_path))
         
-        # 获取语音时间戳
+        # 获取语音时间戳  
         speech_timestamps = get_speech_timestamps(
             wav, 
             vad_model,
             threshold=0.5,
+            sampling_rate=16000,
             min_speech_duration_ms=self.min_speech_duration_ms,
-            min_silence_duration_ms=self.min_silence_duration_ms,
-            return_seconds=True
+            min_silence_duration_ms=self.min_silence_duration_ms
         )
+        
+        # 转换为秒（silero-vad默认返回采样点，需要转换）
+        for ts in speech_timestamps:
+            ts['start'] = ts['start'] / 16000.0
+            ts['end'] = ts['end'] / 16000.0
         
         if not speech_timestamps:
             print("❌ 没有检测到语音段")
@@ -271,93 +353,125 @@ class LongVideoTranscriber:
         return segment_files
     
     def batch_transcribe(self, segments_dir, model_dir):
-        """批量转写音频片段"""
-        print("\n🎤 开始批量转写...")
+        """智能批量转写音频片段"""
+        print("\n🎤 开始智能批量转写...")
         
-        # 加载模型
-        print(f"🔄 加载 {self.model_type.upper()} 模型...")
-        start_time = time.time()
-        
-        try:
-            self.model = FireRedAsr.from_pretrained(self.model_type, model_dir)
-            load_time = time.time() - start_time
-            print(f"✅ 模型加载成功 (耗时: {load_time:.2f}s)")
-        except Exception as e:
-            print(f"❌ 模型加载失败: {str(e)}")
+        # 使用智能模型加载器
+        self.model = self.smart_loader.load_model(self.model_type, model_dir)
+        if not self.model:
+            print("❌ 模型加载失败")
             return None
         
-        # 获取解码配置
-        if self.model_type == "aed":
-            decode_config = {
-                "use_gpu": 1,
-                "beam_size": 3,
-                "nbest": 1,
-                "decode_max_len": 0,
-                "softmax_smoothing": 1.25,
-                "aed_length_penalty": 0.6,
-                "eos_penalty": 1.0
-            }
-        else:  # llm
-            decode_config = {
-                "use_gpu": 1,
-                "beam_size": 3,
-                "decode_max_len": 0,
-                "decode_min_len": 0,
-                "repetition_penalty": 3.0,
-                "llm_length_penalty": 1.0,
-                "temperature": 1.0
-            }
+        # 优化模型以进行推理
+        self.smart_loader.optimize_for_inference()
+        
+        # 获取智能解码配置
+        decode_config = self.smart_loader.get_transcribe_config()
+        print(f"🎯 解码配置: {decode_config}")
+        
+        # 获取并行处理配置
+        strategy = self.hardware_manager.get_optimal_config()['strategy']
+        
+        # 对于大模型，限制并行度以避免内存问题
+        if self.model_type == "llm":
+            # LLM 模型使用串行处理，避免多线程冲突
+            max_workers = 1
+            batch_size = 1
+            print("⚠️ LLM 模型检测，使用串行处理以避免内存冲突")
+        else:
+            # AED 模型可以安全地并行处理
+            max_workers = min(4, strategy['cpu_threads'])  # 限制最大线程数
+            batch_size = strategy['batch_size']
+        
+        print(f"🔧 处理配置: {max_workers} 线程, 批次大小: {batch_size}")
         
         # 读取分段信息
         segments_info_path = segments_dir / "segments.json"
         with open(segments_info_path, 'r', encoding='utf-8') as f:
             segments = json.load(f)
         
-        # 批量转写
-        results = []
-        total = len(segments)
+        # 准备音频片段路径
+        segment_paths = [segments_dir / segment['file'] for segment in segments]
         
-        for i, segment in enumerate(segments):
-            segment_path = segments_dir / segment['file']
-            print(f"\n[{i+1}/{total}] 转写: {segment['file']}")
-            
+        # 创建线程锁以保护模型访问
+        import threading
+        model_lock = threading.Lock()
+        
+        # 创建转录函数
+        def transcribe_single_segment(segment_path):
+            """转录单个音频片段"""
             try:
-                uttid = f"segment_{segment['index']:03d}"
-                start_time = time.time()
+                # 找到对应的 segment 信息
+                segment_info = None
+                for seg in segments:
+                    if segments_dir / seg['file'] == segment_path:
+                        segment_info = seg
+                        break
                 
-                result = self.model.transcribe([uttid], [str(segment_path)], decode_config)
+                if not segment_info:
+                    return None
                 
-                process_time = time.time() - start_time
+                uttid = f"segment_{segment_info['index']:03d}"
+                
+                # 使用锁保护模型调用
+                with model_lock:
+                    # 清理缓存
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    
+                    # 调用模型
+                    result = self.model.transcribe([uttid], [str(segment_path)], decode_config)
                 
                 if result and len(result) > 0:
                     text = result[0]['text']
                     rtf = float(result[0].get('rtf', 0))
                     
-                    print(f"✅ 完成 (耗时: {process_time:.2f}s, RTF: {rtf:.4f})")
-                    print(f"📝 文本: {text}")
-                    
                     # 保存单个结果
                     transcript_path = segments_dir.parent / "transcripts" / f"{uttid}.txt"
                     transcript_path.parent.mkdir(exist_ok=True)
-                    
                     with open(transcript_path, 'w', encoding='utf-8') as f:
                         f.write(text)
                     
-                    results.append({
-                        'index': segment['index'],
-                        'file': segment['file'],
-                        'start': segment['start'],
-                        'end': segment['end'],
-                        'duration': segment['duration'],
+                    return {
+                        'index': segment_info['index'],
+                        'file': segment_info['file'],
+                        'start': segment_info['start'],
+                        'end': segment_info['end'],
+                        'duration': segment_info['duration'],
                         'text': text,
-                        'process_time': process_time,
                         'rtf': rtf
-                    })
-                else:
-                    print(f"❌ 转写失败")
-                    
+                    }
+                
             except Exception as e:
-                print(f"❌ 处理出错: {str(e)}")
+                print(f"❌ 转录片段失败 {segment_path}: {str(e)}")
+                import traceback
+                traceback.print_exc()
+            
+            return None
+        
+        # 根据模型类型选择处理方式
+        if max_workers == 1:
+            # 串行处理
+            print(f"🚀 串行转写 {len(segment_paths)} 个片段...")
+            results = []
+            for i, segment_path in enumerate(segment_paths):
+                print(f"处理片段 {i+1}/{len(segment_paths)}: {segment_path.name}")
+                result = transcribe_single_segment(segment_path)
+                if result:
+                    results.append(result)
+                # 定期清理内存
+                if (i + 1) % 10 == 0:
+                    import gc
+                    gc.collect()
+        else:
+            # 并行处理
+            print(f"🚀 使用 {max_workers} 线程并行转写 {len(segment_paths)} 个片段...")
+            processor = AudioBatchProcessor(max_workers=max_workers)
+            results = processor.process_audio_segments(
+                segment_paths, 
+                transcribe_single_segment,
+                batch_size=batch_size
+            )
         
         # 保存转写结果汇总
         if results:
@@ -365,7 +479,8 @@ class LongVideoTranscriber:
             with open(results_path, 'w', encoding='utf-8') as f:
                 json.dump(results, f, ensure_ascii=False, indent=2)
             
-            print(f"\n✅ 批量转写完成: {len(results)}/{total} 成功")
+            total = len(segments)
+            print(f"\n✅ 智能批量转写完成: {len(results)}/{total} 成功")
             return results
         else:
             print("\n❌ 没有成功转写的片段")
@@ -478,7 +593,7 @@ class LongVideoTranscriber:
             
             # 步骤3：批量转写
             print("\n[步骤 3/4] 批量转写...")
-            model_dir = self.select_model()
+            model_dir = self.get_model_dir()
             if not model_dir:
                 return False
             
