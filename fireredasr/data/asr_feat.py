@@ -6,28 +6,75 @@ import kaldi_native_fbank as knf
 import numpy as np
 import torch
 
+from fireredasr.utils.video_audio import (
+    extract_audio_from_video, 
+    is_video_file, 
+    is_audio_file,
+    TempFileManager
+)
+
 
 class ASRFeatExtractor:
     def __init__(self, kaldi_cmvn_file):
         self.cmvn = CMVN(kaldi_cmvn_file) if kaldi_cmvn_file != "" else None
         self.fbank = KaldifeatFbank(num_mel_bins=80, frame_length=25,
             frame_shift=10, dither=0.0)
+        self.temp_file_manager = TempFileManager()
 
-    def __call__(self, wav_paths):
+    def __call__(self, input_paths):
+        """
+        处理音频或视频文件列表，提取特征
+        
+        Args:
+            input_paths: 音频或视频文件路径列表
+            
+        Returns:
+            feats_pad: 填充后的特征张量
+            lengths: 每个样本的长度
+            durs: 每个样本的时长
+        """
         feats = []
         durs = []
-        for wav_path in wav_paths:
-            sample_rate, wav_np = kaldiio.load_mat(wav_path)
-            dur = wav_np.shape[0] / sample_rate
-            fbank = self.fbank((sample_rate, wav_np))
-            if self.cmvn is not None:
-                fbank = self.cmvn(fbank)
-            fbank = torch.from_numpy(fbank).float()
-            feats.append(fbank)
-            durs.append(dur)
+        
+        try:
+            for input_path in input_paths:
+                # 检查文件类型并处理
+                if is_video_file(input_path):
+                    # 如果是视频文件，先提取音频
+                    wav_path = extract_audio_from_video(input_path, target_sr=16000)
+                    self.temp_file_manager.add_temp_file(wav_path)
+                elif is_audio_file(input_path) or input_path.endswith('.wav'):
+                    # 如果是音频文件，直接使用
+                    wav_path = input_path
+                else:
+                    # 尝试作为WAV文件处理（向后兼容）
+                    wav_path = input_path
+                
+                # 加载音频数据
+                sample_rate, wav_np = kaldiio.load_mat(wav_path)
+                dur = wav_np.shape[0] / sample_rate
+                
+                # 提取fbank特征
+                fbank = self.fbank((sample_rate, wav_np))
+                if self.cmvn is not None:
+                    fbank = self.cmvn(fbank)
+                fbank = torch.from_numpy(fbank).float()
+                
+                feats.append(fbank)
+                durs.append(dur)
+                
+        except Exception as e:
+            # 如果出错，清理临时文件
+            self.temp_file_manager.cleanup()
+            raise e
+            
         lengths = torch.tensor([feat.size(0) for feat in feats]).long()
         feats_pad = self.pad_feat(feats, 0.0)
         return feats_pad, lengths, durs
+    
+    def cleanup_temp_files(self):
+        """手动清理临时文件"""
+        self.temp_file_manager.cleanup()
 
     def pad_feat(self, xs, pad_value):
         # type: (List[Tensor], int) -> Tensor
