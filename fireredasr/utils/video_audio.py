@@ -49,12 +49,21 @@ def extract_audio_from_video(video_path, target_sr=16000, temp_dir=None):
             ).name
             
             # 提取音频到临时文件
-            video.audio.write_audiofile(
-                temp_wav, 
-                verbose=False, 
-                logger=None,
-                temp_audiofile=None
-            )
+            # 兼容不同版本的moviepy
+            try:
+                video.audio.write_audiofile(
+                    temp_wav, 
+                    verbose=False, 
+                    logger=None,
+                    temp_audiofile=None
+                )
+            except TypeError:
+                # 旧版本moviepy不支持temp_audiofile参数
+                video.audio.write_audiofile(
+                    temp_wav, 
+                    verbose=False, 
+                    logger=None
+                )
         
         # 使用librosa重新加载并确保格式正确
         audio_data, sr = librosa.load(temp_wav, sr=target_sr, mono=True)
