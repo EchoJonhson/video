@@ -121,11 +121,18 @@ class ParallelProcessor:
         futures = {}
         results = []
         
+        # 判断是否是音频转录任务（需要特殊处理）
+        is_audio_task = "音频转录" in description
+        
         # 提交任务
-        for item in items:
+        for i, item in enumerate(items):
             # 如果系统负载过高，等待
             while self.should_throttle:
                 time.sleep(0.5)
+            
+            # 对于音频转录任务，在提交之间增加小延迟，避免瞬时压力
+            if is_audio_task and self.max_workers > 1 and i > 0:
+                time.sleep(0.1)  # 100ms延迟
             
             future = self.executor.submit(self._safe_process, process_func, item)
             futures[future] = item
@@ -139,6 +146,11 @@ class ParallelProcessor:
                 
                 self.processed_count += 1
                 self._print_progress(description)
+                
+                # 对于音频转录，每处理完一个就清理一次内存
+                if is_audio_task and self.processed_count % 5 == 0:
+                    import gc
+                    gc.collect()
                 
             except Exception as e:
                 item = futures[future]
@@ -178,8 +190,9 @@ class AudioBatchProcessor:
     def process_audio_segments(self, 
                              segments: List[Path], 
                              transcribe_func: Callable,
-                             batch_size: int = 2) -> List[Dict]:
-        """并行处理音频片段"""
+                             batch_size: int = 2,
+                             model_type: str = 'aed') -> List[Dict]:
+        """并行处理音频片段（支持LLM模型优化）"""
         
         def process_segment(segment_path):
             """处理单个音频片段"""
@@ -192,7 +205,8 @@ class AudioBatchProcessor:
                 process_time = time.time() - start_time
                 
                 if result:
-                    result['process_time'] = process_time
+                    if 'process_time' not in result:
+                        result['process_time'] = process_time
                     return result
                 else:
                     print(f"⚠️ 转录失败: {segment_path}")
@@ -202,8 +216,16 @@ class AudioBatchProcessor:
                 print(f"❌ 处理音频片段失败 {segment_path}: {str(e)}")
                 return None
         
+        # 对于LLM模型，增加批次间的延迟
+        if model_type == 'llm' and self.max_workers > 1:
+            print("🔧 LLM模型并行优化：增加批次间延迟，减少内存压力")
+        
         # 使用并行处理器
         with ParallelProcessor(max_workers=self.max_workers) as processor:
+            # 如果是LLM模型且使用并行，减小批次大小
+            if model_type == 'llm' and self.max_workers > 1:
+                batch_size = 1  # LLM模型每次只处理一个
+                
             results = processor.process_batch(
                 segments, 
                 process_segment, 

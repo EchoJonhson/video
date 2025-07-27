@@ -356,6 +356,53 @@ class LongVideoTranscriber:
         """智能批量转写音频片段"""
         print("\n🎤 开始智能批量转写...")
         
+        # 验证分段目录和文件
+        if not segments_dir.exists():
+            print(f"❌ 分段目录不存在: {segments_dir}")
+            return None
+        
+        segments_info_path = segments_dir / "segments.json"
+        if not segments_info_path.exists():
+            print(f"❌ 分段信息文件不存在: {segments_info_path}")
+            return None
+        
+        # 读取分段信息
+        try:
+            with open(segments_info_path, 'r', encoding='utf-8') as f:
+                segments = json.load(f)
+            print(f"📋 加载分段信息: {len(segments)} 个片段")
+        except Exception as e:
+            print(f"❌ 读取分段信息失败: {e}")
+            return None
+        
+        # 验证分段文件是否存在
+        valid_segments = []
+        missing_files = []
+        
+        for segment in segments:
+            segment_path = segments_dir / segment['file']
+            if segment_path.exists():
+                valid_segments.append(segment)
+            else:
+                missing_files.append(segment['file'])
+        
+        if missing_files:
+            print(f"⚠️ 警告: {len(missing_files)} 个分段文件不存在")
+            if len(missing_files) <= 5:
+                for f in missing_files:
+                    print(f"  - {f}")
+            else:
+                for f in missing_files[:3]:
+                    print(f"  - {f}")
+                print(f"  ... 还有 {len(missing_files) - 3} 个文件")
+        
+        if not valid_segments:
+            print("❌ 没有有效的分段文件")
+            return None
+        
+        print(f"✅ 找到 {len(valid_segments)} 个有效分段文件")
+        segments = valid_segments
+        
         # 使用智能模型加载器
         self.model = self.smart_loader.load_model(self.model_type, model_dir)
         if not self.model:
@@ -372,26 +419,49 @@ class LongVideoTranscriber:
         # 获取并行处理配置
         strategy = self.hardware_manager.get_optimal_config()['strategy']
         
-        # 对于大模型，限制并行度以避免内存问题
+        # 智能选择并行处理策略
+        segment_count = len(segments)
+        
         if self.model_type == "llm":
-            # LLM 模型使用串行处理，避免多线程冲突
-            max_workers = 1
-            batch_size = 1
-            print("⚠️ LLM 模型检测，使用串行处理以避免内存冲突")
+            # LLM 模型智能处理策略
+            # 检查是否使用了GPU辅助（编码器在GPU）
+            gpu_assisted = self.smart_loader.strategy.get('gpu_role') in ['encoder_only', 'feature_extraction']
+            
+            if gpu_assisted and segment_count > 10:
+                # GPU辅助模式下，可以使用有限的并行
+                max_workers = min(2, max(1, strategy['cpu_threads'] // 8))  # 保守的并行度
+                batch_size = 1
+                print(f"🚀 LLM GPU辅助模式: {segment_count} 个分段，使用 {max_workers} 线程并行")
+                print("📌 提示: 编码器在GPU上，LLM主体在CPU上，采用保守并行策略")
+            else:
+                # 纯CPU模式或少量分段，使用串行处理
+                max_workers = 1
+                batch_size = 1
+                if segment_count <= 10:
+                    print(f"⚠️ LLM 串行处理: 分段数较少({segment_count}个)，使用串行处理")
+                else:
+                    print("⚠️ LLM 纯CPU模式，使用串行处理以确保稳定性")
         else:
             # AED 模型可以安全地并行处理
-            max_workers = min(4, strategy['cpu_threads'])  # 限制最大线程数
-            batch_size = strategy['batch_size']
+            # 根据分段数量和硬件能力智能调整并行度
+            if segment_count <= 10:
+                max_workers = min(2, strategy['cpu_threads'])  # 少量分段用少线程
+            elif segment_count <= 50:
+                max_workers = min(4, strategy['cpu_threads'])  # 中等数量分段
+            else:
+                max_workers = min(8, strategy['cpu_threads'])  # 大量分段用更多线程
+            
+            batch_size = min(strategy.get('batch_size', 2), 2)  # 限制批次大小避免内存问题
+            print(f"🔧 AED 智能并行: {segment_count} 个分段，使用 {max_workers} 线程")
         
         print(f"🔧 处理配置: {max_workers} 线程, 批次大小: {batch_size}")
         
-        # 读取分段信息
-        segments_info_path = segments_dir / "segments.json"
-        with open(segments_info_path, 'r', encoding='utf-8') as f:
-            segments = json.load(f)
-        
         # 准备音频片段路径
         segment_paths = [segments_dir / segment['file'] for segment in segments]
+        
+        # 创建输出目录
+        transcripts_dir = segments_dir.parent / "transcripts"
+        transcripts_dir.mkdir(parents=True, exist_ok=True)
         
         # 创建线程锁以保护模型访问
         import threading
@@ -401,6 +471,11 @@ class LongVideoTranscriber:
         def transcribe_single_segment(segment_path):
             """转录单个音频片段"""
             try:
+                # 检查文件是否存在
+                if not segment_path.exists():
+                    print(f"⚠️ 跳过不存在的文件: {segment_path.name}")
+                    return None
+                
                 # 找到对应的 segment 信息
                 segment_info = None
                 for seg in segments:
@@ -409,11 +484,13 @@ class LongVideoTranscriber:
                         break
                 
                 if not segment_info:
+                    print(f"⚠️ 找不到分段信息: {segment_path.name}")
                     return None
                 
                 uttid = f"segment_{segment_info['index']:03d}"
                 
                 # 使用锁保护模型调用
+                start_time = time.time()
                 with model_lock:
                     # 清理缓存
                     if torch.cuda.is_available():
@@ -422,13 +499,14 @@ class LongVideoTranscriber:
                     # 调用模型
                     result = self.model.transcribe([uttid], [str(segment_path)], decode_config)
                 
+                process_time = time.time() - start_time
+                
                 if result and len(result) > 0:
                     text = result[0]['text']
                     rtf = float(result[0].get('rtf', 0))
                     
                     # 保存单个结果
-                    transcript_path = segments_dir.parent / "transcripts" / f"{uttid}.txt"
-                    transcript_path.parent.mkdir(exist_ok=True)
+                    transcript_path = transcripts_dir / f"{uttid}.txt"
                     with open(transcript_path, 'w', encoding='utf-8') as f:
                         f.write(text)
                     
@@ -439,15 +517,18 @@ class LongVideoTranscriber:
                         'end': segment_info['end'],
                         'duration': segment_info['duration'],
                         'text': text,
-                        'rtf': rtf
+                        'rtf': rtf,
+                        'process_time': process_time
                     }
+                else:
+                    print(f"⚠️ 模型转录无结果: {segment_path.name}")
+                    return None
                 
             except Exception as e:
-                print(f"❌ 转录片段失败 {segment_path}: {str(e)}")
+                print(f"❌ 转录片段失败 {segment_path.name}: {str(e)}")
                 import traceback
                 traceback.print_exc()
-            
-            return None
+                return None
         
         # 根据模型类型选择处理方式
         if max_workers == 1:
@@ -470,18 +551,24 @@ class LongVideoTranscriber:
             results = processor.process_audio_segments(
                 segment_paths, 
                 transcribe_single_segment,
-                batch_size=batch_size
+                batch_size=batch_size,
+                model_type=self.model_type
             )
         
         # 保存转写结果汇总
         if results:
-            results_path = segments_dir.parent / "transcripts.json"
-            with open(results_path, 'w', encoding='utf-8') as f:
-                json.dump(results, f, ensure_ascii=False, indent=2)
-            
-            total = len(segments)
-            print(f"\n✅ 智能批量转写完成: {len(results)}/{total} 成功")
-            return results
+            try:
+                results_path = segments_dir.parent / "transcripts.json"
+                results_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(results_path, 'w', encoding='utf-8') as f:
+                    json.dump(results, f, ensure_ascii=False, indent=2)
+                
+                total = len(segments)
+                print(f"\n✅ 智能批量转写完成: {len(results)}/{total} 成功")
+                return results
+            except Exception as e:
+                print(f"❌ 保存转写结果失败: {e}")
+                return results  # 返回结果但记录保存失败
         else:
             print("\n❌ 没有成功转写的片段")
             return None
@@ -534,8 +621,8 @@ class LongVideoTranscriber:
         
         # 生成统计信息
         total_duration = results[-1]['end'] if results else 0
-        total_process_time = sum(r['process_time'] for r in results)
-        avg_rtf = sum(r['rtf'] for r in results) / len(results) if results else 0
+        total_process_time = sum(r.get('process_time', 0) for r in results)
+        avg_rtf = sum(r.get('rtf', 0) for r in results) / len(results) if results else 0
         
         stats = {
             'total_segments': len(results),
