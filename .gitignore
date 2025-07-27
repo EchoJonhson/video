@@ -37,6 +37,13 @@ MANIFEST
 # 输出目录
 examples/out/
 
+# 用户输入输出文件夹内容
+Use/Input/*
+Use/Output/*
+# 保留文件夹结构，但排除.gitkeep文件
+!Use/Input/.gitkeep
+!Use/Output/.gitkeep
+
 # IDE 和编辑器文件
 .vscode/
 .idea/
