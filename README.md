@@ -1,35 +1,35 @@
 <div align="center">
-<h1>FireRedASR: Open-Source Industrial-Grade
+<h1>FireRedASR: 开源工业级
 <br>
-Automatic Speech Recognition Models</h1>
+自动语音识别模型</h1>
 
 </div>
 
-[[Paper]](https://arxiv.org/pdf/2501.14350)
-[[Model]](https://huggingface.co/fireredteam)
-[[Blog]](https://fireredteam.github.io/demos/firered_asr/)
+[[论文]](https://arxiv.org/pdf/2501.14350)
+[[模型]](https://huggingface.co/fireredteam)
+[[博客]](https://fireredteam.github.io/demos/firered_asr/)
 
-FireRedASR is a family of open-source industrial-grade automatic speech recognition (ASR) models supporting Mandarin, Chinese dialects and English, achieving a new state-of-the-art (SOTA) on public Mandarin ASR benchmarks, while also offering outstanding singing lyrics recognition capability.
-
-
-## 🔥 News
-- [2025/02/17] We release [FireRedASR-LLM-L](https://huggingface.co/fireredteam/FireRedASR-LLM-L/tree/main) model weights.
-- [2025/01/24] We release [technical report](https://arxiv.org/pdf/2501.14350), [blog](https://fireredteam.github.io/demos/firered_asr/), and [FireRedASR-AED-L](https://huggingface.co/fireredteam/FireRedASR-AED-L/tree/main) model weights.
+FireRedASR 是一系列开源工业级自动语音识别（ASR）模型，支持普通话、中国方言和英语，在公开的普通话 ASR 基准测试中达到了新的最佳水平（SOTA），同时还提供了出色的歌词识别能力。
 
 
-## Method
+## 🔥 最新消息
+- [2025/02/17] 我们发布了 [FireRedASR-LLM-L](https://huggingface.co/fireredteam/FireRedASR-LLM-L/tree/main) 模型权重。
+- [2025/01/24] 我们发布了 [技术报告](https://arxiv.org/pdf/2501.14350)、[博客](https://fireredteam.github.io/demos/firered_asr/) 和 [FireRedASR-AED-L](https://huggingface.co/fireredteam/FireRedASR-AED-L/tree/main) 模型权重。
 
-FireRedASR is designed to meet diverse requirements in superior performance and optimal efficiency across various applications. It comprises two variants:
-- FireRedASR-LLM: Designed to achieve state-of-the-art (SOTA) performance and to enable seamless end-to-end speech interaction. It adopts an Encoder-Adapter-LLM framework leveraging large language model (LLM) capabilities.
-- FireRedASR-AED: Designed to balance high performance and computational efficiency and to serve as an effective speech representation module in LLM-based speech models. It utilizes an Attention-based Encoder-Decoder (AED) architecture.
+
+## 方法
+
+FireRedASR 旨在满足各种应用场景中对卓越性能和最优效率的多样化需求。它包含两个变体：
+- FireRedASR-LLM：旨在实现最先进（SOTA）的性能，并支持无缝的端到端语音交互。它采用编码器-适配器-LLM框架，充分利用大语言模型（LLM）的能力。
+- FireRedASR-AED：旨在平衡高性能和计算效率，并作为基于LLM的语音模型中的有效语音表示模块。它使用基于注意力的编码器-解码器（AED）架构。
 
 ![Model](/assets/FireRedASR_model.png)
 
 
-## Evaluation
-Results are reported in Character Error Rate (CER%) for Chinese and Word Error Rate (WER%) for English.
+## 评估
+结果以中文的字符错误率（CER%）和英文的词错误率（WER%）报告。
 
-### Evaluation on Public Mandarin ASR Benchmarks
+### 公开普通话ASR基准测试评估
 | Model            | #Params | aishell1 | aishell2 | ws\_net  | ws\_meeting | Average-4 |
 |:----------------:|:-------:|:--------:|:--------:|:--------:|:-----------:|:---------:|
 | FireRedASR-LLM   | 8.3B | 0.76 | 2.15 | 4.60 | 4.67 | 3.05 |
@@ -42,7 +42,7 @@ Results are reported in Character Error Rate (CER%) for Chinese and Word Error R
 
 `ws` means WenetSpeech.
 
-### Evaluation on Public Chinese Dialect and English ASR Benchmarks
+### 公开中国方言和英语ASR基准测试评估
 |Test Set       | KeSpeech | LibriSpeech test-clean | LibriSpeech test-other  |
 | :------------:| :------: | :--------------------: | :----------------------:|
 |FireRedASR-LLM | 3.56 | 1.73 | 3.67 |
@@ -50,46 +50,51 @@ Results are reported in Character Error Rate (CER%) for Chinese and Word Error R
 |Previous SOTA Results | 6.70 | 1.82 | 3.50 |
 
 
-## Usage
-Download model files from [huggingface](https://huggingface.co/fireredteam) and place them in the folder `pretrained_models`.
+## 使用方法
 
-If you want to use `FireRedASR-LLM-L`, you also need to download [Qwen2-7B-Instruct](https://huggingface.co/Qwen/Qwen2-7B-Instruct) and place it in the folder `pretrained_models`. Then, go to folder `FireRedASR-LLM-L` and run `$ ln -s ../Qwen2-7B-Instruct`
+**注意：由于模型文件过大，本仓库不包含预训练模型。请按照以下步骤下载模型文件：**
+
+从 [huggingface](https://huggingface.co/fireredteam) 下载模型文件并将其放置在 `pretrained_models` 文件夹中。
+
+如果您想使用 `FireRedASR-LLM-L`，还需要下载 [Qwen2-7B-Instruct](https://huggingface.co/Qwen/Qwen2-7B-Instruct) 并将其放置在 `pretrained_models` 文件夹中。然后进入 `FireRedASR-LLM-L` 文件夹并运行 `$ ln -s ../Qwen2-7B-Instruct`
 
 
-### Setup
-Create a Python environment and install dependencies
+### 环境设置
+创建 Python 环境并安装依赖
 ```bash
-$ git clone https://github.com/FireRedTeam/FireRedASR.git
+$ git clone https://github.com/EchoJonhson/video.git
+$ cd video
 $ conda create --name fireredasr python=3.10
+$ conda activate fireredasr
 $ pip install -r requirements.txt
 ```
 
-Set up Linux PATH and PYTHONPATH
-```
+设置 Linux PATH 和 PYTHONPATH
+```bash
 $ export PATH=$PWD/fireredasr/:$PWD/fireredasr/utils/:$PATH
 $ export PYTHONPATH=$PWD/:$PYTHONPATH
 ```
 
-Convert audio to 16kHz 16-bit PCM format
-```
+将音频转换为 16kHz 16-bit PCM 格式
+```bash
 ffmpeg -i input_audio -ar 16000 -ac 1 -acodec pcm_s16le -f wav output.wav
 ```
 
-### Quick Start
+### 快速开始
 ```bash
 $ cd examples
 $ bash inference_fireredasr_aed.sh
 $ bash inference_fireredasr_llm.sh
 ```
 
-### Command-line Usage
+### 命令行使用
 ```bash
 $ speech2text.py --help
 $ speech2text.py --wav_path examples/wav/BAC009S0764W0121.wav --asr_type "aed" --model_dir pretrained_models/FireRedASR-AED-L
 $ speech2text.py --wav_path examples/wav/BAC009S0764W0121.wav --asr_type "llm" --model_dir pretrained_models/FireRedASR-LLM-L
 ```
 
-### Python Usage
+### Python 使用示例
 ```python
 from fireredasr.models.fireredasr import FireRedAsr
 
@@ -132,24 +137,24 @@ results = model.transcribe(
 print(results)
 ```
 
-## Usage Tips
-### Batch Beam Search
-- When performing batch beam search with FireRedASR-LLM, please ensure that the input lengths of the utterances are similar. If there are significant differences in utterance lengths, shorter utterances may experience repetition issues. You can either sort your dataset by length or set `batch_size` to 1 to avoid the repetition issue.
+## 使用技巧
+### 批量束搜索
+- 在使用 FireRedASR-LLM 进行批量束搜索时，请确保输入语音的长度相似。如果语音长度差异较大，较短的语音可能会出现重复问题。您可以按长度对数据集进行排序，或者将 `batch_size` 设置为 1 来避免这个问题。
 
-### Input Length Limitations
-- FireRedASR-AED supports audio input up to 60s. Input longer than 60s may cause hallucination issues, and input exceeding 200s will trigger positional encoding errors.
-- FireRedASR-LLM supports audio input up to 30s. The behavior for longer input is currently unknown.
+### 输入长度限制
+- FireRedASR-AED 支持最长 60 秒的音频输入。超过 60 秒的输入可能会导致幻觉问题，超过 200 秒的输入将触发位置编码错误。
+- FireRedASR-LLM 支持最长 30 秒的音频输入。更长输入的行为目前尚不清楚。
 
 
-## Acknowledgements
-Thanks to the following open-source works:
+## 致谢
+感谢以下开源项目：
 - [Qwen2-7B-Instruct](https://huggingface.co/Qwen/Qwen2-7B-Instruct)
 - [icefall/ASR_LLM](https://github.com/k2-fsa/icefall/tree/master/egs/speech_llm/ASR_LLM)
 - [WeNet](https://github.com/wenet-e2e/wenet)
 - [Speech-Transformer](https://github.com/kaituoxu/Speech-Transformer)
 
 
-## Citation
+## 引用
 ```bibtex
 @article{xu2025fireredasr,
   title={FireRedASR: Open-Source Industrial-Grade Mandarin Speech Recognition Models from Encoder-Decoder to LLM Integration},
