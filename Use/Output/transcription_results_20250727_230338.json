@@ -1,0 +1,18 @@
+{
+  "metadata": {
+    "timestamp": "2025-07-27T23:03:38.723036",
+    "model": "aed",
+    "total_files": 1,
+    "successful": 1
+  },
+  "results": [
+    {
+      "file": "test.mp4",
+      "text": "你好你好你能听见我的声音吗",
+      "duration": 1.648585319519043,
+      "rtf": 0.0964,
+      "model": "aed",
+      "timestamp": "2025-07-27T23:03:38.722826"
+    }
+  ]
+}
