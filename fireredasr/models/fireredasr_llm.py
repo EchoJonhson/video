@@ -18,7 +18,7 @@ class FireRedAsrLlm(nn.Module):
     @classmethod
     def load_encoder(cls, model_path):
         assert os.path.exists(model_path)
-        package = torch.load(model_path, map_location=lambda storage, loc: storage)
+        package = torch.load(model_path, map_location=lambda storage, loc: storage, weights_only=False)
         model = FireRedAsrAed.from_args(package["args"])
         if "model_state_dict" in package:
             model.load_state_dict(package["model_state_dict"], strict=False)
@@ -121,6 +121,12 @@ class FireRedAsrLlm(nn.Module):
                    repetition_penalty=1.0, llm_length_penalty=1.0, temperature=1.0):
         encoder_outs, enc_lengths, enc_mask = self.encoder(padded_feat, feat_lengths)
         speech_features, speech_lens = self.encoder_projector(encoder_outs, enc_lengths)
+        
+        # Move speech features to CPU where LLM resides
+        speech_features = speech_features.cpu()
+        padded_input_ids = padded_input_ids.cpu()
+        attention_mask = attention_mask.cpu()
+        
         inputs_embeds = self.llm.get_input_embeddings()(padded_input_ids)
 
         inputs_embeds, attention_mask, _ = \

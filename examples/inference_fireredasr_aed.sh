@@ -1,10 +1,10 @@
 #!/bin/bash
 
-export PATH=$PWD/fireredasr/:$PWD/fireredasr/utils/:$PATH
-export PYTHONPATH=$PWD/:$PYTHONPATH
+export PATH=$PWD/../fireredasr/:$PWD/../fireredasr/utils/:$PATH
+export PYTHONPATH=$PWD/../:$PYTHONPATH
 
 # model_dir includes model.pth.tar, cmvn.ark, dict.txt
-model_dir=$PWD/pretrained_models/FireRedASR-AED-L
+model_dir=$PWD/../pretrained_models/FireRedASR-AED-L
 
 # Support several input format
 wavs="--wav_path wav/BAC009S0764W0121.wav"

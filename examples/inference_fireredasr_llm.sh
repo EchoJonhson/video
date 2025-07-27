@@ -1,10 +1,10 @@
 #!/bin/bash
 
-export PATH=$PWD/fireredasr/:$PWD/fireredasr/utils/:$PATH
-export PYTHONPATH=$PWD/:$PYTHONPATH
+export PATH=$PWD/../fireredasr/:$PWD/../fireredasr/utils/:$PATH
+export PYTHONPATH=$PWD/../:$PYTHONPATH
 
 # model_dir includes model.pth.tar, asr_encoder.pth.tar, cmvn.ark, Qwen2-7B-Instruct
-model_dir=$PWD/pretrained_models/FireRedASR-LLM-L
+model_dir=$PWD/../pretrained_models/FireRedASR-LLM-L
 
 # Support several input format
 wavs="--wav_path wav/BAC009S0764W0121.wav"
@@ -16,14 +16,14 @@ out="out/llm-l-asr.txt"
 
 decode_args="
 --batch_size 1 --beam_size 3 --decode_max_len 0 --decode_min_len 0
---repetition_penalty 3.0 --llm_length_penalty 1.0 --temperature 1.0
+--repetition_penalty 3.0 --llm_length_penalty 1.0 --temperature 1.0 --use_gpu 1
 "
 
 mkdir -p $(dirname $out)
 set -x
 
 
-CUDA_VISIBLE_DEVICES=0 \
+CUDA_VISIBLE_DEVICES=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 speech2text.py --asr_type "llm" --model_dir $model_dir $decode_args $wavs --output $out
 
 

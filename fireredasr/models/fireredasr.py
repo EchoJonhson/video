@@ -44,8 +44,18 @@ class FireRedAsr:
         feats, lengths, durs = self.feat_extractor(batch_wav_path)
         total_dur = sum(durs)
         if args.get("use_gpu", False):
-            feats, lengths = feats.cuda(), lengths.cuda()
-            self.model.cuda()
+            # Hybrid CPU+GPU: Encoder on GPU, LLM on CPU for memory efficiency
+            device = 'cuda:0'
+            feats, lengths = feats.to(device), lengths.to(device)
+            
+            if self.asr_type == "llm":
+                # Move only encoder to GPU, keep LLM on CPU
+                self.model.encoder.to(device)
+                self.model.encoder_projector.to(device)
+                # LLM stays on CPU to save GPU memory
+                self.model.llm.cpu()
+            else:
+                self.model.to(device)
         else:
             self.model.cpu()
 
@@ -80,8 +90,9 @@ class FireRedAsr:
                     origin_texts=[""]*feats.size(0), tokenizer=self.tokenizer,
                     max_len=128, decode=True)
             if args.get("use_gpu", False):
-                input_ids = input_ids.cuda()
-                attention_mask = attention_mask.cuda()
+                device = 'cuda:0'
+                input_ids = input_ids.to(device)
+                attention_mask = attention_mask.to(device)
             start_time = time.time()
 
             generated_ids = self.model.transcribe(
@@ -98,6 +109,10 @@ class FireRedAsr:
             rtf= elapsed / total_dur if total_dur > 0 else 0
             texts = self.tokenizer.batch_decode(generated_ids,
                                                 skip_special_tokens=True)
+            # Debug: print generated tokens and text
+            print(f"DEBUG - Generated token shape: {generated_ids.shape}")
+            print(f"DEBUG - Generated tokens: {generated_ids[0][:20]}")  # First 20 tokens
+            print(f"DEBUG - Decoded text: '{texts[0]}'")
             results = []
             for uttid, wav, text in zip(batch_uttid, batch_wav_path, texts):
                 results.append({"uttid": uttid, "text": text, "wav": wav,
@@ -107,7 +122,7 @@ class FireRedAsr:
 
 
 def load_fireredasr_aed_model(model_path):
-    package = torch.load(model_path, map_location=lambda storage, loc: storage)
+    package = torch.load(model_path, map_location=lambda storage, loc: storage, weights_only=False)
     print("model args:", package["args"])
     model = FireRedAsrAed.from_args(package["args"])
     model.load_state_dict(package["model_state_dict"], strict=True)
@@ -115,11 +130,14 @@ def load_fireredasr_aed_model(model_path):
 
 
 def load_firered_llm_model_and_tokenizer(model_path, encoder_path, llm_dir):
-    package = torch.load(model_path, map_location=lambda storage, loc: storage)
+    package = torch.load(model_path, map_location=lambda storage, loc: storage, weights_only=False)
     package["args"].encoder_path = encoder_path
     package["args"].llm_dir = llm_dir
+    # Disable FP16 for better stability
+    package["args"].use_fp16 = False
     print("model args:", package["args"])
     model = FireRedAsrLlm.from_args(package["args"])
     model.load_state_dict(package["model_state_dict"], strict=False)
+    # Keep model in full precision
     tokenizer = LlmTokenizerWrapper.build_llm_tokenizer(llm_dir)
     return model, tokenizer
