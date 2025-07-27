@@ -75,26 +75,63 @@ $ export PATH=$PWD/fireredasr/:$PWD/fireredasr/utils/:$PATH
 $ export PYTHONPATH=$PWD/:$PYTHONPATH
 ```
 
-将音频转换为 16kHz 16-bit PCM 格式
+### 格式转换
+
+**音频格式转换** - 将音频转换为 16kHz 16-bit PCM 格式
 ```bash
 ffmpeg -i input_audio -ar 16000 -ac 1 -acodec pcm_s16le -f wav output.wav
 ```
 
+**从视频提取音频** - 从视频文件提取音频（可选，FireRedASR可自动处理）
+```bash
+ffmpeg -i input_video.mp4 -ar 16000 -ac 1 -acodec pcm_s16le -f wav output.wav
+```
+
 ### 快速开始
+
+**处理音频文件**
 ```bash
 $ cd examples
 $ bash inference_fireredasr_aed.sh
 $ bash inference_fireredasr_llm.sh
 ```
 
+**处理视频文件**
+```bash
+$ cd examples
+$ bash inference_video.sh                    # Shell脚本示例
+$ python video_processing_example.py         # Python示例
+```
+
 ### 命令行使用
+
+**音频文件处理（向后兼容）**
 ```bash
 $ speech2text.py --help
 $ speech2text.py --wav_path examples/wav/BAC009S0764W0121.wav --asr_type "aed" --model_dir pretrained_models/FireRedASR-AED-L
 $ speech2text.py --wav_path examples/wav/BAC009S0764W0121.wav --asr_type "llm" --model_dir pretrained_models/FireRedASR-LLM-L
 ```
 
+**视频文件处理**
+```bash
+# 处理单个视频文件
+$ speech2text.py --video_path video.mp4 --asr_type "aed" --model_dir pretrained_models/FireRedASR-AED-L
+$ speech2text.py --input_path video.mp4 --asr_type "llm" --model_dir pretrained_models/FireRedASR-LLM-L
+
+# 批量处理视频目录
+$ speech2text.py --video_dir videos/ --asr_type "aed" --model_dir pretrained_models/FireRedASR-AED-L
+
+# 混合处理音频和视频
+$ speech2text.py --input_dir media/ --asr_type "aed" --model_dir pretrained_models/FireRedASR-AED-L
+$ speech2text.py --input_paths audio.wav video.mp4 --asr_type "aed" --model_dir pretrained_models/FireRedASR-AED-L
+```
+
+**支持的视频格式：** MP4, AVI, MOV, MKV, FLV, WMV  
+**支持的音频格式：** WAV, MP3, FLAC, M4A, AAC, OGG
+
 ### Python 使用示例
+
+**处理音频文件**
 ```python
 from fireredasr.models.fireredasr import FireRedAsr
 
@@ -117,13 +154,21 @@ results = model.transcribe(
     }
 )
 print(results)
+```
 
+**处理视频文件**
+```python
+from fireredasr.models.fireredasr import FireRedAsr
 
-# FireRedASR-LLM
+# 直接处理视频文件，FireRedASR会自动提取音频
+batch_uttid = ["my_video"]
+batch_video_path = ["path/to/video.mp4"]
+
+# FireRedASR-LLM 处理视频
 model = FireRedAsr.from_pretrained("llm", "pretrained_models/FireRedASR-LLM-L")
 results = model.transcribe(
     batch_uttid,
-    batch_wav_path,
+    batch_video_path,
     {
         "use_gpu": 1,
         "beam_size": 3,
@@ -135,6 +180,19 @@ results = model.transcribe(
     }
 )
 print(results)
+
+# 处理完成后，临时文件会自动清理
+model.feat_extractor.cleanup_temp_files()
+```
+
+**混合处理音频和视频**
+```python
+# 可以在同一批次中混合处理不同格式的文件
+batch_uttid = ["audio_sample", "video_sample"]
+batch_media_path = ["audio.wav", "video.mp4"]
+
+model = FireRedAsr.from_pretrained("aed", "pretrained_models/FireRedASR-AED-L")
+results = model.transcribe(batch_uttid, batch_media_path, config)
 ```
 
 ## 使用技巧
