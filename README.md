@@ -248,6 +248,53 @@ $ python long_video_transcribe.py --model_type llm --max_duration 45
 - ⚡ 模型预加载和缓存
 - 🔧 动态批处理大小调整
 
+### 🔤 中文标点符号恢复（新功能）
+FireRedASR 现已集成中文标点符号恢复功能，自动为转写文本添加标点符号：
+
+**支持的标点符号：**
+- 逗号（，）、句号（。）、问号（？）
+- 感叹号（！）、顿号（、）、分号（；）
+
+**使用方法：**
+```bash
+# 长视频转写（默认启用标点恢复）
+$ python long_video_transcribe.py
+
+# 禁用标点恢复
+$ python long_video_transcribe.py --disable-punctuation
+
+# 长音频转写（默认启用标点恢复）
+$ python long_audio_transcribe.py --input_audio audio.mp3 --model_dir pretrained_models/FireRedASR-AED-L
+
+# 批量转写（默认启用标点恢复）
+$ python batch_transcribe.py --disable-punctuation
+```
+
+**高级参数配置：**
+```bash
+# 自定义标点恢复参数
+$ python long_video_transcribe.py \
+    --punctuation-model-dir /path/to/custom/model \
+    --punctuation-chunk-size 512 \
+    --punctuation-stride 256
+```
+
+**功能特点：**
+- ✅ 自动下载并缓存标点恢复模型
+- ✅ 滑动窗口处理长文本，无长度限制
+- ✅ GPU/CPU 自适应，自动选择最优设备
+- ✅ 错误降级机制，保证转写流程稳定
+- ✅ 同时输出原始文本和带标点文本
+
+**输出文件示例：**
+```
+output/
+├── video_transcription.txt              # 原始转写文本
+├── video_transcription_with_punctuation.txt   # 带标点文本
+├── video_transcription.srt              # 原始字幕文件
+└── video_transcription_with_punctuation.srt   # 带标点字幕文件
+```
+
 ## 📋 使用技巧与最佳实践
 
 ### 模型选择建议
