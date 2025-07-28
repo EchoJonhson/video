@@ -26,6 +26,7 @@ import time
 sys.path.insert(0, str(Path(__file__).parent))
 
 from fireredasr.models.fireredasr import FireRedAsr
+from fireredasr.utils.punctuation_restore import PunctuationRestorer
 
 
 class LongAudioTranscriber:
@@ -41,6 +42,13 @@ class LongAudioTranscriber:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.segments_dir.mkdir(parents=True, exist_ok=True)
         self.transcripts_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 标点恢复相关
+        self.enable_punctuation = True  # 默认启用标点恢复
+        self.punctuation_restorer = None
+        self.punctuation_model_dir = None
+        self.punctuation_chunk_size = 256
+        self.punctuation_stride = 128
     
     def check_dependencies(self):
         """检查依赖是否安装"""
@@ -383,6 +391,85 @@ class LongAudioTranscriber:
         print(f"  平均 RTF: {avg_rtf:.4f}")
         print(f"📄 统计信息: {stats_path}")
         
+        # 标点恢复处理
+        if self.enable_punctuation:
+            try:
+                print(f"\n🔤 开始标点恢复处理...")
+                
+                # 初始化标点恢复器（延迟加载）
+                if self.punctuation_restorer is None:
+                    self.punctuation_restorer = PunctuationRestorer(
+                        cache_dir=self.punctuation_model_dir,
+                        chunk_size=self.punctuation_chunk_size,
+                        stride=self.punctuation_stride
+                    )
+                    
+                # 对纯文本进行标点恢复
+                # 提取所有文本内容
+                full_text = '\n'.join([r['text'] for r in valid_results])
+                punctuated_text = self.punctuation_restorer.restore_punctuation(full_text)
+                
+                # 保存带标点的纯文本
+                if 'txt' in output_formats:
+                    punctuated_txt_path = self.output_dir / "full_transcript_with_punctuation.txt"
+                    with open(punctuated_txt_path, 'w', encoding='utf-8') as f:
+                        f.write(f"FireRedASR 长音频转写结果（带标点）\n")
+                        f.write(f"处理时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                        f.write(f"使用模型: FireRedASR-{self.model_type.upper()}\n")
+                        f.write(f"总分段数: {len(valid_results)}\n")
+                        f.write("=" * 60 + "\n\n")
+                        
+                        # 将带标点的文本按原始分段重新分配
+                        punctuated_lines = punctuated_text.split('\n')
+                        for i, result in enumerate(valid_results):
+                            start_time = result['start_time']
+                            end_time = result['end_time']
+                            
+                            # 尝试使用对应的带标点文本
+                            if i < len(punctuated_lines):
+                                text = punctuated_lines[i]
+                            else:
+                                text = result['text']
+                            
+                            # 格式化时间
+                            start_str = self.format_time(start_time)
+                            end_str = self.format_time(end_time)
+                            
+                            f.write(f"[{start_str} - {end_str}] {text}\n\n")
+                    
+                    output_files.append(punctuated_txt_path)
+                    print(f"📄 带标点文本文件: {punctuated_txt_path}")
+                
+                # 生成带标点的 SRT 字幕
+                if 'srt' in output_formats:
+                    punctuated_srt_path = self.output_dir / "full_transcript_with_punctuation.srt"
+                    with open(punctuated_srt_path, 'w', encoding='utf-8') as f:
+                        punctuated_lines = punctuated_text.split('\n')
+                        for i, result in enumerate(valid_results, 1):
+                            start_time = result['start_time']
+                            end_time = result['end_time']
+                            
+                            # 尝试使用对应的带标点文本
+                            if i-1 < len(punctuated_lines):
+                                text = punctuated_lines[i-1]
+                            else:
+                                text = result['text']
+                            
+                            # SRT 时间格式
+                            start_srt = self.format_time_srt(start_time)
+                            end_srt = self.format_time_srt(end_time)
+                            
+                            f.write(f"{i}\n")
+                            f.write(f"{start_srt} --> {end_srt}\n")
+                            f.write(f"{text}\n\n")
+                    
+                    output_files.append(punctuated_srt_path)
+                    print(f"📄 带标点字幕文件: {punctuated_srt_path}")
+                    
+            except Exception as e:
+                print(f"⚠️ 标点恢复失败: {str(e)}")
+                print("   将保留无标点版本")
+        
         return output_files
     
     def format_time(self, seconds):
@@ -451,6 +538,18 @@ def main():
     parser.add_argument('--output_dir', type=str, default='long_audio_output', help="输出目录")
     parser.add_argument('--output_formats', type=str, nargs='+', choices=['txt', 'srt'], default=['txt', 'srt'], help="输出格式")
     
+    # 标点恢复相关参数
+    parser.add_argument('--enable-punctuation', action='store_true', default=True,
+                        help='启用标点恢复（默认启用）')
+    parser.add_argument('--disable-punctuation', action='store_true',
+                        help='禁用标点恢复')
+    parser.add_argument('--punctuation-model-dir', type=str,
+                        help='自定义标点恢复模型路径')
+    parser.add_argument('--punctuation-chunk-size', type=int, default=256,
+                        help='标点恢复文本块大小（默认: 256）')
+    parser.add_argument('--punctuation-stride', type=int, default=128,
+                        help='标点恢复滑动窗口步长（默认: 128）')
+    
     args = parser.parse_args()
     
     # 检查输入文件
@@ -469,6 +568,17 @@ def main():
         model_dir=args.model_dir,
         output_dir=args.output_dir
     )
+    
+    # 设置标点恢复参数
+    if args.disable_punctuation:
+        transcriber.enable_punctuation = False
+    else:
+        transcriber.enable_punctuation = True
+    
+    if args.punctuation_model_dir:
+        transcriber.punctuation_model_dir = args.punctuation_model_dir
+    transcriber.punctuation_chunk_size = args.punctuation_chunk_size
+    transcriber.punctuation_stride = args.punctuation_stride
     
     # 执行完整流程
     success = transcriber.process_long_audio(args.input_audio, args.output_formats)
