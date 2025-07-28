@@ -581,22 +581,37 @@ class LongVideoTranscriber:
             print("\n❌ 没有成功转写的片段")
             return None
     
-    def concatenate_results(self, results, output_base_path):
+    def generate_unique_filename(self, base_path, extension):
+        """生成唯一的文件名，避免覆盖"""
+        counter = 1
+        final_path = Path(f"{base_path}{extension}")
+        
+        while final_path.exists():
+            counter += 1
+            final_path = Path(f"{base_path}_{counter}{extension}")
+        
+        return final_path
+    
+    def concatenate_results(self, results, input_filename):
         """拼接转写结果"""
         print("\n📝 拼接转写结果...")
         
         # 按时间排序
         results.sort(key=lambda x: x['start'])
         
+        # 获取输入文件的基本名称（不含扩展名）
+        base_name = Path(input_filename).stem
+        output_base = self.output_dir / base_name
+        
         # 生成纯文本
         full_text = []
         for result in results:
             full_text.append(result['text'])
         
-        txt_path = Path(str(output_base_path) + ".txt")
+        txt_path = self.generate_unique_filename(output_base, ".txt")
         with open(txt_path, 'w', encoding='utf-8') as f:
             f.write('\n'.join(full_text))
-        print(f"✅ 生成纯文本: {txt_path}")
+        print(f"✅ 生成纯文本: {txt_path.name}")
         
         # 生成带时间戳的文本
         timestamp_text = []
@@ -607,10 +622,10 @@ class LongVideoTranscriber:
             timestamp_text.append(result['text'])
             timestamp_text.append("")
         
-        timestamp_path = Path(str(output_base_path) + "_with_timestamps.txt")
+        timestamp_path = self.generate_unique_filename(output_base, "_时间戳.txt")
         with open(timestamp_path, 'w', encoding='utf-8') as f:
             f.write('\n'.join(timestamp_text))
-        print(f"✅ 生成时间戳文本: {timestamp_path}")
+        print(f"✅ 生成时间戳文本: {timestamp_path.name}")
         
         # 生成 SRT 字幕
         srt_lines = []
@@ -622,10 +637,10 @@ class LongVideoTranscriber:
             srt_lines.append(result['text'])
             srt_lines.append("")
         
-        srt_path = Path(str(output_base_path) + ".srt")
+        srt_path = self.generate_unique_filename(output_base, ".srt")
         with open(srt_path, 'w', encoding='utf-8') as f:
             f.write('\n'.join(srt_lines))
-        print(f"✅ 生成 SRT 字幕: {srt_path}")
+        print(f"✅ 生成字幕文件: {srt_path.name}")
         
         # 生成统计信息
         total_duration = results[-1]['end'] if results else 0
@@ -642,7 +657,7 @@ class LongVideoTranscriber:
             'model_type': self.model_type
         }
         
-        stats_path = Path(str(output_base_path) + "_stats.json")
+        stats_path = self.generate_unique_filename(output_base, "_统计.json")
         with open(stats_path, 'w', encoding='utf-8') as f:
             json.dump(stats, f, ensure_ascii=False, indent=2)
         
@@ -670,10 +685,10 @@ class LongVideoTranscriber:
                 punctuated_text = self.punctuation_restorer.restore_punctuation(full_text_content)
                 
                 # 保存带标点的纯文本
-                punctuated_txt_path = Path(str(output_base_path) + "_with_punctuation.txt")
+                punctuated_txt_path = self.generate_unique_filename(output_base, "_标点.txt")
                 with open(punctuated_txt_path, 'w', encoding='utf-8') as f:
                     f.write(punctuated_text)
-                print(f"✅ 生成带标点文本: {punctuated_txt_path}")
+                print(f"✅ 生成带标点文本: {punctuated_txt_path.name}")
                 
                 # 生成带标点的 SRT 字幕
                 # 将带标点的文本按原始分段重新分配
@@ -704,10 +719,10 @@ class LongVideoTranscriber:
                     punctuated_srt_lines.append(result.get('punctuated_text', result['text']))
                     punctuated_srt_lines.append("")
                 
-                punctuated_srt_path = Path(str(output_base_path) + "_with_punctuation.srt")
+                punctuated_srt_path = self.generate_unique_filename(output_base, "_标点.srt")
                 with open(punctuated_srt_path, 'w', encoding='utf-8') as f:
                     f.write('\n'.join(punctuated_srt_lines))
-                print(f"✅ 生成带标点字幕: {punctuated_srt_path}")
+                print(f"✅ 生成带标点字幕: {punctuated_srt_path.name}")
                 
             except Exception as e:
                 print(f"⚠️ 标点恢复失败: {str(e)}")
@@ -759,8 +774,7 @@ class LongVideoTranscriber:
             
             # 步骤4：拼接结果
             print("\n[步骤 4/4] 拼接结果...")
-            output_base = self.output_dir / f"{input_path.stem}_transcription_{timestamp}"
-            self.concatenate_results(results, output_base)
+            self.concatenate_results(results, input_path.name)
             
             print(f"\n✅ 处理完成！")
             
