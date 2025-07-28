@@ -12,3 +12,6 @@ soundfile>=0.12.0
 # 长音频处理依赖
 torchaudio>=2.0.0
 ffmpeg-python>=0.2.0
+
+# 中文标点恢复依赖
+accelerate>=0.20.0  # GPU加速支持（可选）
