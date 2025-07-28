@@ -39,6 +39,7 @@ from utils.smart_model_loader import create_smart_loader
 from utils.parallel_processor import AudioBatchProcessor
 from fireredasr.utils.video_audio import is_video_file, is_audio_file
 from fireredasr.utils.punctuation_restore import PunctuationRestorer
+from fireredasr.utils.paragraph_segmentation import ParagraphSegmenter
 
 
 class LongVideoTranscriber:
@@ -82,6 +83,13 @@ class LongVideoTranscriber:
         self.punctuation_model_dir = None
         self.punctuation_chunk_size = 256
         self.punctuation_stride = 128
+        
+        # 分段相关
+        self.enable_paragraph = False  # 默认不启用分段
+        self.paragraph_segmenter = None
+        self.paragraph_method = "rule"  # rule/semantic/hybrid
+        self.min_paragraph_length = 50
+        self.max_paragraph_length = 500
         
     def check_dependencies(self):
         """检查依赖是否安装"""
@@ -724,6 +732,39 @@ class LongVideoTranscriber:
                     f.write('\n'.join(punctuated_srt_lines))
                 print(f"✅ 生成带标点字幕: {punctuated_srt_path.name}")
                 
+                # 如果启用了分段功能
+                if self.enable_paragraph and punctuated_text:
+                    try:
+                        print(f"\n📑 开始自然段分段处理...")
+                        
+                        # 初始化分段器
+                        if self.paragraph_segmenter is None:
+                            self.paragraph_segmenter = ParagraphSegmenter(
+                                min_length=self.min_paragraph_length,
+                                max_length=self.max_paragraph_length
+                            )
+                        
+                        # 执行分段
+                        paragraphs = self.paragraph_segmenter.segment_paragraphs(punctuated_text)
+                        
+                        # 保存分段结果
+                        paragraph_txt_path = self.generate_unique_filename(output_base, "_段落.txt")
+                        with open(paragraph_txt_path, 'w', encoding='utf-8') as f:
+                            f.write(f"FireRedASR 视频转写结果（自然段格式）\n")
+                            f.write(f"处理时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                            f.write(f"段落数: {len(paragraphs)}\n")
+                            f.write("=" * 60 + "\n\n")
+                            
+                            for i, para in enumerate(paragraphs, 1):
+                                f.write(f"【第{i}段】\n{para}\n\n")
+                        
+                        print(f"✅ 生成自然段文件: {paragraph_txt_path.name}")
+                        print(f"   共分为 {len(paragraphs)} 个自然段")
+                        
+                    except Exception as e:
+                        print(f"⚠️ 分段处理失败: {str(e)}")
+                        print("   将保留带标点版本")
+                
             except Exception as e:
                 print(f"⚠️ 标点恢复失败: {str(e)}")
                 print("   将保留无标点版本")
@@ -894,6 +935,17 @@ def main():
     parser.add_argument('--punctuation-stride', type=int, default=128,
                         help='标点恢复滑动窗口步长（默认: 128）')
     
+    # 分段相关参数
+    parser.add_argument('--enable-paragraph', action='store_true',
+                        help='启用自然段分段功能')
+    parser.add_argument('--paragraph-method', type=str, default='rule',
+                        choices=['rule', 'semantic', 'hybrid'],
+                        help='分段方法：rule（规则）、semantic（语义）、hybrid（混合）')
+    parser.add_argument('--min-paragraph-length', type=int, default=50,
+                        help='最小段落长度（默认: 50字）')
+    parser.add_argument('--max-paragraph-length', type=int, default=500,
+                        help='最大段落长度（默认: 500字）')
+    
     args = parser.parse_args()
     
     # 检查是否在正确的目录
@@ -924,6 +976,12 @@ def main():
             transcriber.punctuation_model_dir = args.punctuation_model_dir
         transcriber.punctuation_chunk_size = args.punctuation_chunk_size
         transcriber.punctuation_stride = args.punctuation_stride
+        
+        # 设置分段参数
+        transcriber.enable_paragraph = args.enable_paragraph
+        transcriber.paragraph_method = args.paragraph_method
+        transcriber.min_paragraph_length = args.min_paragraph_length
+        transcriber.max_paragraph_length = args.max_paragraph_length
         
         transcriber.run()
         
