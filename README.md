@@ -195,6 +195,47 @@ model = FireRedAsr.from_pretrained("aed", "pretrained_models/FireRedASR-AED-L")
 results = model.transcribe(batch_uttid, batch_media_path, config)
 ```
 
+## 批量处理工具
+
+### 批量转写工具
+使用 `batch_transcribe.py` 批量处理多个音频和视频文件：
+
+```bash
+# 1. 将音频/视频文件放入 Use/Input/ 文件夹
+# 2. 运行批量处理脚本
+$ python batch_transcribe.py
+
+# 脚本会自动：
+# - 扫描 Use/Input/ 中的所有支持的媒体文件
+# - 让用户选择使用 AED 或 LLM 模型
+# - 批量进行语音识别
+# - 将结果保存到 Use/Output/ 文件夹
+```
+
+### 长视频处理工具
+使用 `long_video_transcribe.py` 处理长时间的音频/视频文件：
+
+```bash
+# 处理长视频/音频（自动切片、批量转写、结果拼接）
+$ python long_video_transcribe.py
+
+# 使用自定义参数
+$ python long_video_transcribe.py --model_type llm --max_duration 45
+
+# 功能特点：
+# - 自动使用 VAD 检测语音段
+# - 智能切分长音频为适合模型的片段
+# - 批量转写所有片段
+# - 自动拼接生成完整文本和字幕文件
+# - 输出格式：TXT、SRT、带时间戳文本、JSON统计
+```
+
+**长视频处理流程：**
+1. 音频准备：转换为16kHz单声道WAV格式
+2. VAD切片：使用Silero VAD检测语音活动并切分
+3. 批量转写：使用FireRedASR模型转写每个片段
+4. 结果拼接：合并所有片段生成完整文本
+
 ## 使用技巧
 ### 批量束搜索
 - 在使用 FireRedASR-LLM 进行批量束搜索时，请确保输入语音的长度相似。如果语音长度差异较大，较短的语音可能会出现重复问题。您可以按长度对数据集进行排序，或者将 `batch_size` 设置为 1 来避免这个问题。
@@ -202,6 +243,7 @@ results = model.transcribe(batch_uttid, batch_media_path, config)
 ### 输入长度限制
 - FireRedASR-AED 支持最长 60 秒的音频输入。超过 60 秒的输入可能会导致幻觉问题，超过 200 秒的输入将触发位置编码错误。
 - FireRedASR-LLM 支持最长 30 秒的音频输入。更长输入的行为目前尚不清楚。
+- 对于超过限制的长音频/视频，请使用 `long_video_transcribe.py` 工具，它会自动切分并处理。
 
 
 ## 致谢
