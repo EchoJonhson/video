@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from fireredasr.models.fireredasr import FireRedAsr
 from fireredasr.utils.video_audio import is_video_file, is_audio_file
 from fireredasr.utils.punctuation_restore import PunctuationRestorer
+from fireredasr.utils.paragraph_segmentation import ParagraphSegmenter
 
 
 class BatchTranscriber:
@@ -47,6 +48,12 @@ class BatchTranscriber:
         self.punctuation_model_dir = None
         self.punctuation_chunk_size = 256
         self.punctuation_stride = 128
+        
+        # 分段相关（批量模式下可能用处不大，但保持接口一致）
+        self.enable_paragraph = False  # 默认不启用分段
+        self.paragraph_segmenter = None
+        self.min_paragraph_length = 50
+        self.max_paragraph_length = 500
     
     def scan_input_files(self):
         """扫描输入文件夹中的媒体文件"""
@@ -298,6 +305,47 @@ class BatchTranscriber:
                 print(f"📄 带标点文本文件: {punctuated_txt_file}")
                 print(f"📄 带标点JSON文件: {punctuated_json_file}")
                 
+                # 如果启用了分段功能，合并所有文本并分段
+                if self.enable_paragraph and punctuated_results:
+                    try:
+                        print(f"\n📑 开始合并文本并进行自然段分段...")
+                        
+                        # 初始化分段器
+                        if self.paragraph_segmenter is None:
+                            self.paragraph_segmenter = ParagraphSegmenter(
+                                min_length=self.min_paragraph_length,
+                                max_length=self.max_paragraph_length
+                            )
+                        
+                        # 合并所有识别结果的文本
+                        merged_text = ""
+                        for result in punctuated_results:
+                            if result and result.get('text'):
+                                merged_text += result['text'] + "。"
+                        
+                        # 执行分段
+                        paragraphs = self.paragraph_segmenter.segment_paragraphs(merged_text)
+                        
+                        # 保存分段结果
+                        paragraph_txt_file = self.output_dir / f"transcription_results_{timestamp}_paragraphs.txt"
+                        with open(paragraph_txt_file, 'w', encoding='utf-8') as f:
+                            f.write(f"FireRedASR 批量识别结果（自然段格式）\n")
+                            f.write(f"处理时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                            f.write(f"使用模型: {self.model_type.upper()}\n")
+                            f.write(f"文件数: {len(punctuated_results)}\n")
+                            f.write(f"段落数: {len(paragraphs)}\n")
+                            f.write("=" * 60 + "\n\n")
+                            
+                            for i, para in enumerate(paragraphs, 1):
+                                f.write(f"【第{i}段】\n{para}\n\n")
+                        
+                        print(f"📄 自然段格式文件: {paragraph_txt_file}")
+                        print(f"   共分为 {len(paragraphs)} 个自然段")
+                        
+                    except Exception as e:
+                        print(f"⚠️ 分段处理失败: {str(e)}")
+                        print("   将保留带标点版本")
+                
             except Exception as e:
                 print(f"⚠️ 标点恢复失败: {str(e)}")
                 print("   将保留无标点版本")
@@ -382,6 +430,14 @@ def main():
     parser.add_argument('--punctuation-stride', type=int, default=128,
                         help='标点恢复滑动窗口步长（默认: 128）')
     
+    # 分段相关参数
+    parser.add_argument('--enable-paragraph', action='store_true',
+                        help='启用自然段分段功能（将合并所有文本后分段）')
+    parser.add_argument('--min-paragraph-length', type=int, default=50,
+                        help='最小段落长度（默认: 50字）')
+    parser.add_argument('--max-paragraph-length', type=int, default=500,
+                        help='最大段落长度（默认: 500字）')
+    
     args = parser.parse_args()
     
     # 检查是否在正确的目录
@@ -406,6 +462,11 @@ def main():
             transcriber.punctuation_model_dir = args.punctuation_model_dir
         transcriber.punctuation_chunk_size = args.punctuation_chunk_size
         transcriber.punctuation_stride = args.punctuation_stride
+        
+        # 设置分段参数
+        transcriber.enable_paragraph = args.enable_paragraph
+        transcriber.min_paragraph_length = args.min_paragraph_length
+        transcriber.max_paragraph_length = args.max_paragraph_length
         
         transcriber.run()
     except Exception as e:
