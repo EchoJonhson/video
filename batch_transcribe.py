@@ -17,6 +17,7 @@ import os
 import sys
 import time
 import json
+import argparse
 from pathlib import Path
 from datetime import datetime
 
@@ -25,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from fireredasr.models.fireredasr import FireRedAsr
 from fireredasr.utils.video_audio import is_video_file, is_audio_file
+from fireredasr.utils.punctuation_restore import PunctuationRestorer
 
 
 class BatchTranscriber:
@@ -38,6 +40,13 @@ class BatchTranscriber:
         
         # 确保输出目录存在
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 标点恢复相关
+        self.enable_punctuation = True  # 默认启用标点恢复
+        self.punctuation_restorer = None
+        self.punctuation_model_dir = None
+        self.punctuation_chunk_size = 256
+        self.punctuation_stride = 128
     
     def scan_input_files(self):
         """扫描输入文件夹中的媒体文件"""
@@ -228,6 +237,70 @@ class BatchTranscriber:
         print(f"\n💾 结果已保存:")
         print(f"📄 文本文件: {txt_file}")
         print(f"📄 JSON文件: {json_file}")
+        
+        # 标点恢复处理
+        if self.enable_punctuation and all_results:
+            try:
+                print(f"\n🔤 开始标点恢复处理...")
+                
+                # 初始化标点恢复器（延迟加载）
+                if self.punctuation_restorer is None:
+                    self.punctuation_restorer = PunctuationRestorer(
+                        cache_dir=self.punctuation_model_dir,
+                        chunk_size=self.punctuation_chunk_size,
+                        stride=self.punctuation_stride
+                    )
+                
+                # 生成带标点的文本文件
+                punctuated_txt_file = self.output_dir / f"transcription_results_{timestamp}_with_punctuation.txt"
+                punctuated_json_file = self.output_dir / f"transcription_results_{timestamp}_with_punctuation.json"
+                
+                # 处理每个结果的标点恢复
+                punctuated_results = []
+                for result in all_results:
+                    if result and result.get('text'):
+                        punctuated_text = self.punctuation_restorer.restore_punctuation(result['text'])
+                        punctuated_result = result.copy()
+                        punctuated_result['text'] = punctuated_text
+                        punctuated_result['original_text'] = result['text']
+                        punctuated_results.append(punctuated_result)
+                    else:
+                        punctuated_results.append(result)
+                
+                # 写入带标点的文本文件
+                with open(punctuated_txt_file, 'w', encoding='utf-8') as f:
+                    f.write(f"FireRedASR 批量语音识别结果（带标点）\n")
+                    f.write(f"处理时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(f"使用模型: {self.model_type.upper()}\n")
+                    f.write("=" * 60 + "\n\n")
+                    
+                    for i, result in enumerate(punctuated_results, 1):
+                        if result:
+                            f.write(f"{i}. 文件: {result['file']}\n")
+                            f.write(f"   识别结果: {result['text']}\n")
+                            f.write(f"   处理时间: {result['duration']:.2f}s\n")
+                            f.write(f"   RTF: {result['rtf']:.4f}\n")
+                            f.write("-" * 40 + "\n")
+                
+                # 写入带标点的JSON文件
+                with open(punctuated_json_file, 'w', encoding='utf-8') as f:
+                    json.dump({
+                        'metadata': {
+                            'timestamp': datetime.now().isoformat(),
+                            'model': self.model_type,
+                            'total_files': len(punctuated_results),
+                            'successful': len([r for r in punctuated_results if r is not None]),
+                            'punctuation_enabled': True
+                        },
+                        'results': punctuated_results
+                    }, f, ensure_ascii=False, indent=2)
+                
+                print(f"📄 带标点文本文件: {punctuated_txt_file}")
+                print(f"📄 带标点JSON文件: {punctuated_json_file}")
+                
+            except Exception as e:
+                print(f"⚠️ 标点恢复失败: {str(e)}")
+                print("   将保留无标点版本")
     
     def run(self):
         """运行批量转录"""
@@ -295,6 +368,22 @@ class BatchTranscriber:
 
 def main():
     """主函数"""
+    parser = argparse.ArgumentParser(description="FireRedASR 批量语音识别工具")
+    
+    # 标点恢复相关参数
+    parser.add_argument('--enable-punctuation', action='store_true', default=True,
+                        help='启用标点恢复（默认启用）')
+    parser.add_argument('--disable-punctuation', action='store_true',
+                        help='禁用标点恢复')
+    parser.add_argument('--punctuation-model-dir', type=str,
+                        help='自定义标点恢复模型路径')
+    parser.add_argument('--punctuation-chunk-size', type=int, default=256,
+                        help='标点恢复文本块大小（默认: 256）')
+    parser.add_argument('--punctuation-stride', type=int, default=128,
+                        help='标点恢复滑动窗口步长（默认: 128）')
+    
+    args = parser.parse_args()
+    
     # 检查是否在正确的目录
     if not Path("fireredasr").exists():
         print("❌ 错误: 请在 FireRedASR 项目根目录下运行此脚本")
@@ -306,6 +395,18 @@ def main():
     
     try:
         transcriber = BatchTranscriber()
+        
+        # 设置标点恢复参数
+        if args.disable_punctuation:
+            transcriber.enable_punctuation = False
+        else:
+            transcriber.enable_punctuation = True
+        
+        if args.punctuation_model_dir:
+            transcriber.punctuation_model_dir = args.punctuation_model_dir
+        transcriber.punctuation_chunk_size = args.punctuation_chunk_size
+        transcriber.punctuation_stride = args.punctuation_stride
+        
         transcriber.run()
     except Exception as e:
         print(f"❌ 程序运行出错: {str(e)}")

@@ -59,3 +59,10 @@ Thumbs.db
 *.tmp
 *.temp
 *.log
+
+# 配置文件和敏感信息
+.roo/
+.env
+*.env
+config.json
+*config*.json

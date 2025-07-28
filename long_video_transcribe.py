@@ -38,6 +38,7 @@ from utils.hardware_manager import get_hardware_manager
 from utils.smart_model_loader import create_smart_loader
 from utils.parallel_processor import AudioBatchProcessor
 from fireredasr.utils.video_audio import is_video_file, is_audio_file
+from fireredasr.utils.punctuation_restore import PunctuationRestorer
 
 
 class LongVideoTranscriber:
@@ -74,6 +75,13 @@ class LongVideoTranscriber:
         
         # 打印硬件配置
         self.hardware_manager.print_hardware_info()
+        
+        # 标点恢复相关
+        self.enable_punctuation = True  # 默认启用标点恢复
+        self.punctuation_restorer = None
+        self.punctuation_model_dir = None
+        self.punctuation_chunk_size = 256
+        self.punctuation_stride = 128
         
     def check_dependencies(self):
         """检查依赖是否安装"""
@@ -573,22 +581,37 @@ class LongVideoTranscriber:
             print("\n❌ 没有成功转写的片段")
             return None
     
-    def concatenate_results(self, results, output_base_path):
+    def generate_unique_filename(self, base_path, extension):
+        """生成唯一的文件名，避免覆盖"""
+        counter = 1
+        final_path = Path(f"{base_path}{extension}")
+        
+        while final_path.exists():
+            counter += 1
+            final_path = Path(f"{base_path}_{counter}{extension}")
+        
+        return final_path
+    
+    def concatenate_results(self, results, input_filename):
         """拼接转写结果"""
         print("\n📝 拼接转写结果...")
         
         # 按时间排序
         results.sort(key=lambda x: x['start'])
         
+        # 获取输入文件的基本名称（不含扩展名）
+        base_name = Path(input_filename).stem
+        output_base = self.output_dir / base_name
+        
         # 生成纯文本
         full_text = []
         for result in results:
             full_text.append(result['text'])
         
-        txt_path = Path(str(output_base_path) + ".txt")
+        txt_path = self.generate_unique_filename(output_base, ".txt")
         with open(txt_path, 'w', encoding='utf-8') as f:
             f.write('\n'.join(full_text))
-        print(f"✅ 生成纯文本: {txt_path}")
+        print(f"✅ 生成纯文本: {txt_path.name}")
         
         # 生成带时间戳的文本
         timestamp_text = []
@@ -599,10 +622,10 @@ class LongVideoTranscriber:
             timestamp_text.append(result['text'])
             timestamp_text.append("")
         
-        timestamp_path = Path(str(output_base_path) + "_with_timestamps.txt")
+        timestamp_path = self.generate_unique_filename(output_base, "_时间戳.txt")
         with open(timestamp_path, 'w', encoding='utf-8') as f:
             f.write('\n'.join(timestamp_text))
-        print(f"✅ 生成时间戳文本: {timestamp_path}")
+        print(f"✅ 生成时间戳文本: {timestamp_path.name}")
         
         # 生成 SRT 字幕
         srt_lines = []
@@ -614,10 +637,10 @@ class LongVideoTranscriber:
             srt_lines.append(result['text'])
             srt_lines.append("")
         
-        srt_path = Path(str(output_base_path) + ".srt")
+        srt_path = self.generate_unique_filename(output_base, ".srt")
         with open(srt_path, 'w', encoding='utf-8') as f:
             f.write('\n'.join(srt_lines))
-        print(f"✅ 生成 SRT 字幕: {srt_path}")
+        print(f"✅ 生成字幕文件: {srt_path.name}")
         
         # 生成统计信息
         total_duration = results[-1]['end'] if results else 0
@@ -634,7 +657,7 @@ class LongVideoTranscriber:
             'model_type': self.model_type
         }
         
-        stats_path = Path(str(output_base_path) + "_stats.json")
+        stats_path = self.generate_unique_filename(output_base, "_统计.json")
         with open(stats_path, 'w', encoding='utf-8') as f:
             json.dump(stats, f, ensure_ascii=False, indent=2)
         
@@ -643,6 +666,67 @@ class LongVideoTranscriber:
         print(f"   处理时间: {total_process_time:.2f}s")
         print(f"   平均 RTF: {avg_rtf:.4f}")
         print(f"   总字符数: {stats['total_characters']}")
+        
+        # 标点恢复处理
+        if self.enable_punctuation:
+            try:
+                print(f"\n🔤 开始标点恢复处理...")
+                
+                # 初始化标点恢复器（延迟加载）
+                if self.punctuation_restorer is None:
+                    self.punctuation_restorer = PunctuationRestorer(
+                        cache_dir=self.punctuation_model_dir,
+                        chunk_size=self.punctuation_chunk_size,
+                        stride=self.punctuation_stride
+                    )
+                    
+                # 对纯文本进行标点恢复
+                full_text_content = '\n'.join(full_text)
+                punctuated_text = self.punctuation_restorer.restore_punctuation(full_text_content)
+                
+                # 保存带标点的纯文本
+                punctuated_txt_path = self.generate_unique_filename(output_base, "_标点.txt")
+                with open(punctuated_txt_path, 'w', encoding='utf-8') as f:
+                    f.write(punctuated_text)
+                print(f"✅ 生成带标点文本: {punctuated_txt_path.name}")
+                
+                # 生成带标点的 SRT 字幕
+                # 将带标点的文本按原始分段重新分配
+                punctuated_lines = punctuated_text.split('\n')
+                if len(punctuated_lines) == len(results):
+                    # 如果行数匹配，直接使用
+                    for i, result in enumerate(results):
+                        if i < len(punctuated_lines):
+                            result['punctuated_text'] = punctuated_lines[i]
+                        else:
+                            result['punctuated_text'] = result['text']
+                else:
+                    # 如果行数不匹配，尝试按字符长度分配
+                    punctuated_full = punctuated_text.replace('\n', ' ')
+                    char_offset = 0
+                    for result in results:
+                        orig_len = len(result['text'])
+                        result['punctuated_text'] = punctuated_full[char_offset:char_offset + orig_len].strip()
+                        char_offset += orig_len
+                
+                # 生成带标点的 SRT
+                punctuated_srt_lines = []
+                for i, result in enumerate(results, 1):
+                    start_time = self.seconds_to_srt_time(result['start'])
+                    end_time = self.seconds_to_srt_time(result['end'])
+                    punctuated_srt_lines.append(str(i))
+                    punctuated_srt_lines.append(f"{start_time} --> {end_time}")
+                    punctuated_srt_lines.append(result.get('punctuated_text', result['text']))
+                    punctuated_srt_lines.append("")
+                
+                punctuated_srt_path = self.generate_unique_filename(output_base, "_标点.srt")
+                with open(punctuated_srt_path, 'w', encoding='utf-8') as f:
+                    f.write('\n'.join(punctuated_srt_lines))
+                print(f"✅ 生成带标点字幕: {punctuated_srt_path.name}")
+                
+            except Exception as e:
+                print(f"⚠️ 标点恢复失败: {str(e)}")
+                print("   将保留无标点版本")
     
     def seconds_to_srt_time(self, seconds):
         """将秒数转换为 SRT 时间格式"""
@@ -690,8 +774,7 @@ class LongVideoTranscriber:
             
             # 步骤4：拼接结果
             print("\n[步骤 4/4] 拼接结果...")
-            output_base = self.output_dir / f"{input_path.stem}_transcription_{timestamp}"
-            self.concatenate_results(results, output_base)
+            self.concatenate_results(results, input_path.name)
             
             print(f"\n✅ 处理完成！")
             
@@ -799,6 +882,18 @@ def main():
     parser.add_argument('--min_speech', type=int, default=1000,
                         help='最小语音段长度（毫秒）')
     
+    # 标点恢复相关参数
+    parser.add_argument('--enable-punctuation', action='store_true', default=True,
+                        help='启用标点恢复（默认启用）')
+    parser.add_argument('--disable-punctuation', action='store_true',
+                        help='禁用标点恢复')
+    parser.add_argument('--punctuation-model-dir', type=str,
+                        help='自定义标点恢复模型路径')
+    parser.add_argument('--punctuation-chunk-size', type=int, default=256,
+                        help='标点恢复文本块大小（默认: 256）')
+    parser.add_argument('--punctuation-stride', type=int, default=128,
+                        help='标点恢复滑动窗口步长（默认: 128）')
+    
     args = parser.parse_args()
     
     # 检查是否在正确的目录
@@ -818,6 +913,17 @@ def main():
         transcriber.max_speech_duration_s = args.max_duration
         transcriber.min_silence_duration_ms = args.min_silence
         transcriber.min_speech_duration_ms = args.min_speech
+        
+        # 设置标点恢复参数
+        if args.disable_punctuation:
+            transcriber.enable_punctuation = False
+        else:
+            transcriber.enable_punctuation = True
+        
+        if args.punctuation_model_dir:
+            transcriber.punctuation_model_dir = args.punctuation_model_dir
+        transcriber.punctuation_chunk_size = args.punctuation_chunk_size
+        transcriber.punctuation_stride = args.punctuation_stride
         
         transcriber.run()
         
