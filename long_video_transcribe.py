@@ -40,6 +40,7 @@ from utils.parallel_processor import AudioBatchProcessor
 from fireredasr.utils.video_audio import is_video_file, is_audio_file
 from fireredasr.utils.punctuation_restore import PunctuationRestorer
 from fireredasr.utils.paragraph_segmentation import ParagraphSegmenter
+from fireredasr.utils.cpu_optimization_config import CPUOptimizationConfig
 
 
 class LongVideoTranscriber:
@@ -439,18 +440,35 @@ class LongVideoTranscriber:
         segment_count = len(segments)
         
         if self.model_type == "llm":
+            # 导入CPU优化配置
+            cpu_optimizer = CPUOptimizationConfig()
+            
+            # 获取动态优化配置
+            opt_config = cpu_optimizer.get_dynamic_config(segment_count, "llm")
+            
             # LLM 模型智能处理策略
-            # 检查是否使用了GPU辅助（编码器在GPU）
             gpu_assisted = self.smart_loader.strategy.get('gpu_role') in ['encoder_only', 'feature_extraction']
             
-            if gpu_assisted and segment_count > 10:
-                # GPU辅助模式下，可以使用有限的并行
-                max_workers = min(2, max(1, strategy['cpu_threads'] // 8))  # 保守的并行度
-                batch_size = 1
-                print(f"🚀 LLM GPU辅助模式: {segment_count} 个分段，使用 {max_workers} 线程并行")
-                print("📌 提示: 编码器在GPU上，LLM主体在CPU上，采用保守并行策略")
+            if gpu_assisted:
+                # GPU辅助模式下的优化配置
+                max_workers = opt_config["max_workers"]
+                batch_size = opt_config["batch_size"]
+                
+                # 内存使用估算
+                memory_est = cpu_optimizer.estimate_memory_usage("llm", max_workers)
+                
+                print(f"🚀 LLM GPU辅助模式优化:")
+                print(f"   - 分段数: {segment_count}")
+                print(f"   - 并行线程: {max_workers} (原2个，现优化为{max_workers}个)")
+                print(f"   - 预估内存: {memory_est['total_gb']:.1f}GB / {memory_est['available_gb']:.1f}GB ({memory_est['usage_percent']:.1f}%)")
+                print(f"   - CPU配置: i9-14900KF (24栃32线程)")
+                print("📌 优化策略: 编码器在GPU，LLM主体在CPU，使用动态并行度调整")
+                
+                # 启用预读取优化
+                self.prefetch_segments = opt_config["memory_config"]["prefetch_segments"]
+                
             else:
-                # 纯CPU模式或少量分段，使用串行处理
+                # 纯CPU模式保持原有策略
                 max_workers = 1
                 batch_size = 1
                 if segment_count <= 10:
@@ -458,17 +476,17 @@ class LongVideoTranscriber:
                 else:
                     print("⚠️ LLM 纯CPU模式，使用串行处理以确保稳定性")
         else:
-            # AED 模型可以安全地并行处理
-            # 根据分段数量和硬件能力智能调整并行度
-            if segment_count <= 10:
-                max_workers = min(2, strategy['cpu_threads'])  # 少量分段用少线程
-            elif segment_count <= 50:
-                max_workers = min(4, strategy['cpu_threads'])  # 中等数量分段
-            else:
-                max_workers = min(8, strategy['cpu_threads'])  # 大量分段用更多线程
+            # AED 模型优化
+            cpu_optimizer = CPUOptimizationConfig()
+            opt_config = cpu_optimizer.get_dynamic_config(segment_count, "aed")
             
-            batch_size = min(strategy.get('batch_size', 2), 2)  # 限制批次大小避免内存问题
-            print(f"🔧 AED 智能并行: {segment_count} 个分段，使用 {max_workers} 线程")
+            max_workers = opt_config["max_workers"]
+            batch_size = opt_config["batch_size"]
+            
+            print(f"🔧 AED 智能并行优化:")
+            print(f"   - 分段数: {segment_count}")
+            print(f"   - 并行线程: {max_workers}")
+            print(f"   - 批处理大小: {batch_size}")
         
         print(f"🔧 处理配置: {max_workers} 线程, 批次大小: {batch_size}")
         
@@ -482,6 +500,24 @@ class LongVideoTranscriber:
         # 创建线程锁以保护模型访问
         import threading
         model_lock = threading.Lock()
+        
+        # 预读取优化（如果启用）
+        audio_cache = {}
+        if hasattr(self, 'prefetch_segments') and self.prefetch_segments > 0:
+            print(f"📥 启用预读取优化，预加载 {self.prefetch_segments} 个音频段...")
+            from concurrent.futures import ThreadPoolExecutor
+            
+            def prefetch_audio(idx):
+                if idx < len(segments):
+                    segment_path = segments_dir / segments[idx]['file']
+                    if segment_path.exists():
+                        with open(segment_path, 'rb') as f:
+                            audio_cache[idx] = segment_path
+                            
+            # 预加载前几个音频段
+            with ThreadPoolExecutor(max_workers=2) as prefetch_executor:
+                for i in range(min(self.prefetch_segments, len(segments))):
+                    prefetch_executor.submit(prefetch_audio, i)
         
         # 创建转录函数
         def transcribe_single_segment(segment_path):

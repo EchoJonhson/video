@@ -1,0 +1,78 @@
+# 优化建议补丁 - 针对 long_video_transcribe.py 的第 441-472 行
+
+# 原代码（第441-472行）的优化版本：
+
+if self.model_type == "llm":
+    # 导入CPU优化配置
+    from utils.cpu_optimization_config import CPUOptimizationConfig
+    cpu_optimizer = CPUOptimizationConfig()
+    
+    # 获取动态优化配置
+    opt_config = cpu_optimizer.get_dynamic_config(segment_count, "llm")
+    
+    # LLM 模型智能处理策略
+    gpu_assisted = self.smart_loader.strategy.get('gpu_role') in ['encoder_only', 'feature_extraction']
+    
+    if gpu_assisted:
+        # GPU辅助模式下的优化配置
+        max_workers = opt_config["max_workers"]
+        batch_size = opt_config["batch_size"]
+        
+        # 内存使用估算
+        memory_est = cpu_optimizer.estimate_memory_usage("llm", max_workers)
+        
+        print(f"🚀 LLM GPU辅助模式优化:")
+        print(f"   - 分段数: {segment_count}")
+        print(f"   - 并行线程: {max_workers} (原2个，现优化为{max_workers}个)")
+        print(f"   - 预估内存: {memory_est['total_gb']:.1f}GB / {memory_est['available_gb']:.1f}GB ({memory_est['usage_percent']:.1f}%)")
+        print(f"   - CPU配置: i9-14900KF (24核32线程)")
+        print("📌 优化策略: 编码器在GPU，LLM主体在CPU，使用CPU亲和性优化")
+        
+        # 设置CPU亲和性（可选）
+        if opt_config["cpu_affinity"]["enable"]:
+            import os
+            # 为当前进程设置CPU亲和性
+            os.sched_setaffinity(0, opt_config["cpu_affinity"]["llm_cores"])
+            
+        # 启用预读取优化
+        self.prefetch_segments = opt_config["memory_config"]["prefetch_segments"]
+        
+    else:
+        # 纯CPU模式保持原有策略
+        max_workers = 1
+        batch_size = 1
+        if segment_count <= 10:
+            print(f"⚠️ LLM 串行处理: 分段数较少({segment_count}个)，使用串行处理")
+        else:
+            print("⚠️ LLM 纯CPU模式，使用串行处理以确保稳定性")
+            
+else:
+    # AED 模型优化
+    from utils.cpu_optimization_config import CPUOptimizationConfig
+    cpu_optimizer = CPUOptimizationConfig()
+    opt_config = cpu_optimizer.get_dynamic_config(segment_count, "aed")
+    
+    max_workers = opt_config["max_workers"]
+    batch_size = opt_config["batch_size"]
+    
+    print(f"🔧 AED 智能并行优化:")
+    print(f"   - 分段数: {segment_count}")
+    print(f"   - 并行线程: {max_workers}")
+    print(f"   - 批处理大小: {batch_size}")
+
+print(f"🔧 最终处理配置: {max_workers} 线程, 批次大小: {batch_size}")
+
+# 额外优化：添加预读取线程池
+if hasattr(self, 'prefetch_segments') and self.prefetch_segments > 0:
+    # 创建预读取线程池
+    from concurrent.futures import ThreadPoolExecutor
+    prefetch_executor = ThreadPoolExecutor(max_workers=2)
+    
+    def prefetch_audio_segments(start_idx, count):
+        """预读取音频段到内存"""
+        for i in range(start_idx, min(start_idx + count, len(segments))):
+            segment_path = segments_dir / segments[i]['file']
+            if segment_path.exists():
+                # 预加载到内存缓存
+                with open(segment_path, 'rb') as f:
+                    audio_cache[i] = f.read()
