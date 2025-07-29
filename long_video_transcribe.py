@@ -41,6 +41,7 @@ from fireredasr.utils.video_audio import is_video_file, is_audio_file
 from fireredasr.utils.punctuation_restore import PunctuationRestorer
 from fireredasr.utils.paragraph_segmentation import ParagraphSegmenter
 from fireredasr.utils.cpu_optimization_config import CPUOptimizationConfig
+from utils.terminal_beautifier import TerminalBeautifier, create_progress_bar
 
 
 class LongVideoTranscriber:
@@ -63,15 +64,23 @@ class LongVideoTranscriber:
         self.supported_audio = {'.wav', '.mp3', '.flac', '.m4a', '.aac', '.ogg'}
         
         # 初始化智能系统
-        print("🔧 初始化智能处理系统...")
+        self.beautifier = TerminalBeautifier()
+        self.beautifier.print_header("FireRedASR 长视频转写系统", "智能语音识别处理引擎 v2.0")
+        
+        # 使用动画显示初始化过程
+        spinner = self.beautifier.create_spinner("正在初始化智能处理系统...")
+        spinner.start()
+        
         self.hardware_manager = get_hardware_manager()
         self.smart_loader = create_smart_loader(self.hardware_manager)
         self.parallel_processor = None
         
+        spinner.stop(success_msg="智能处理系统初始化完成！")
+        
         # 检查环境变量配置
         force_cpu = os.environ.get('FIREREDASR_FORCE_CPU', '').lower() in ['1', 'true', 'yes']
         if force_cpu:
-            print("⚠️ 强制使用 CPU 模式 (FIREREDASR_FORCE_CPU=1)")
+            self.beautifier.print_warning("强制使用 CPU 模式 (FIREREDASR_FORCE_CPU=1)")
             self.hardware_manager.strategy['name'] = 'cpu_primary'
             self.hardware_manager.strategy['use_gpu'] = False
         
@@ -94,22 +103,22 @@ class LongVideoTranscriber:
         
     def check_dependencies(self):
         """检查依赖是否安装"""
-        print("🔍 检查依赖...")
+        self.beautifier.print_section("检查依赖", "🔍")
         
         # 检查 ffmpeg
         try:
             subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True)
-            print("✅ ffmpeg 已安装")
+            self.beautifier.print_success("ffmpeg 已安装")
         except (subprocess.CalledProcessError, FileNotFoundError):
-            print("❌ ffmpeg 未安装，请先安装 ffmpeg")
+            self.beautifier.print_error("ffmpeg 未安装，请先安装 ffmpeg")
             return False
         
         # 检查 torchaudio
         try:
             import torchaudio
-            print("✅ torchaudio 已安装")
+            self.beautifier.print_success("torchaudio 已安装")
         except ImportError:
-            print("❌ torchaudio 未安装，请运行: pip install torchaudio")
+            self.beautifier.print_error("torchaudio 未安装，请运行: pip install torchaudio")
             return False
         
         return True
@@ -117,7 +126,7 @@ class LongVideoTranscriber:
     def scan_long_media_files(self):
         """扫描输入文件夹中的长媒体文件"""
         if not self.input_dir.exists():
-            print(f"❌ 错误: 输入文件夹不存在: {self.input_dir}")
+            self.beautifier.print_error(f"输入文件夹不存在: {self.input_dir}")
             return []
         
         media_files = []
@@ -136,54 +145,76 @@ class LongVideoTranscriber:
     def display_files(self, files):
         """显示找到的文件"""
         if not files:
-            print("❌ 在 Use/Input/ 文件夹中没有找到大型媒体文件")
-            print("提示：长视频处理适用于大于10MB的音视频文件")
+            self.beautifier.print_error("在 Use/Input/ 文件夹中没有找到大型媒体文件")
+            self.beautifier.print_info("提示：长视频处理适用于大于10MB的音视频文件")
             return False
         
-        print(f"\n📁 在 Use/Input/ 中找到 {len(files)} 个大型媒体文件:")
-        print("-" * 60)
+        self.beautifier.print_section(f"扫描结果：发现 {len(files)} 个待处理文件", "📁")
         
+        # 创建文件列表表格
+        headers = ["序号", "文件名", "大小", "类型", "预估时长"]
+        rows = []
+        
+        total_size = 0
         for i, file_path in enumerate(files, 1):
             file_size = file_path.stat().st_size / 1024 / 1024  # MB
-            if is_video_file(str(file_path)):
-                file_type = "📹 视频"
-            else:
-                file_type = "🎵 音频"
+            total_size += file_size
             
-            print(f"{i:2d}. {file_type} | {file_path.name} ({file_size:.2f} MB)")
+            if is_video_file(str(file_path)):
+                file_type = "视频"
+                icon = "📹"
+            else:
+                file_type = "音频"
+                icon = "🎵"
+            
+            # 估算时长（基于文件大小的粗略估计）
+            estimated_duration = file_size * 0.5  # 假设2MB/分钟
+            duration_str = f"~{int(estimated_duration)}分钟"
+            
+            rows.append([
+                f"{icon} {i}",
+                file_path.name[:40] + ("..." if len(file_path.name) > 40 else ""),
+                f"{file_size:.1f} MB",
+                file_type,
+                duration_str
+            ])
         
-        print("-" * 60)
+        self.beautifier.print_table(headers, rows)
+        self.beautifier.print_info(f"\n总文件大小: {total_size:.1f} MB", "💾")
         return True
     
     def get_model_dir(self):
         """根据命令行参数获取模型目录"""
         if not self.model_type:
-            print("❌ 未指定模型类型，请使用 --model_type 参数")
+            self.beautifier.print_error("未指定模型类型，请使用 --model_type 参数")
             return None
         
         if self.model_type == "aed":
             model_dir = "pretrained_models/FireRedASR-AED-L"
-            print("✅ 使用 FireRedASR-AED 模型 (快速, 适合长音频)")
+            self.beautifier.print_success("使用 FireRedASR-AED 模型 (快速, 适合长音频)")
         elif self.model_type == "llm":
             model_dir = "pretrained_models/FireRedASR-LLM-L"
-            print("✅ 使用 FireRedASR-LLM 模型 (高精度, 处理较慢)")
+            self.beautifier.print_success("使用 FireRedASR-LLM 模型 (高精度, 处理较慢)")
         else:
-            print(f"❌ 未知模型类型: {self.model_type}")
+            self.beautifier.print_error(f"未知模型类型: {self.model_type}")
             return None
         
         # 检查模型路径
         if not Path(model_dir).exists():
-            print(f"❌ 模型目录不存在: {model_dir}")
-            print("请先下载模型文件，参考 step.md 文档")
+            self.beautifier.print_error(f"模型目录不存在: {model_dir}")
+            self.beautifier.print_info("请先下载模型文件，参考 step.md 文档")
             return None
         
         return model_dir
     
     def select_model(self):
         """让用户选择模型"""
-        print("\n🤖 请选择要使用的模型:")
-        print("1. FireRedASR-AED (快速, 适合长音频)")
-        print("2. FireRedASR-LLM (高精度, 处理较慢)")
+        self.beautifier.print_section("请选择要使用的模型", "🤖")
+        model_options = [
+            ["1", "FireRedASR-AED", "快速, 适合长音频"],
+            ["2", "FireRedASR-LLM", "高精度, 处理较慢"]
+        ]
+        self.beautifier.print_table(["选项", "模型", "特点"], model_options)
         
         while True:
             try:
@@ -191,30 +222,30 @@ class LongVideoTranscriber:
                 if choice == "1":
                     self.model_type = "aed"
                     model_dir = "pretrained_models/FireRedASR-AED-L"
-                    print("✅ 选择了 FireRedASR-AED 模型")
+                    self.beautifier.print_success("选择了 FireRedASR-AED 模型")
                     break
                 elif choice == "2":
                     self.model_type = "llm"
                     model_dir = "pretrained_models/FireRedASR-LLM-L"
-                    print("✅ 选择了 FireRedASR-LLM 模型")
+                    self.beautifier.print_success("选择了 FireRedASR-LLM 模型")
                     break
                 else:
-                    print("❌ 无效输入，请输入 1 或 2")
+                    self.beautifier.print_error("无效输入，请输入 1 或 2")
             except KeyboardInterrupt:
-                print("\n\n👋 用户取消操作")
+                self.beautifier.print_warning("用户取消操作", "👋")
                 return None
         
         # 检查模型路径
         if not Path(model_dir).exists():
-            print(f"❌ 错误: 模型目录不存在: {model_dir}")
-            print("请从 https://huggingface.co/fireredteam 下载模型文件")
+            self.beautifier.print_error(f"模型目录不存在: {model_dir}")
+            self.beautifier.print_info("请从 https://huggingface.co/fireredteam 下载模型文件")
             return None
         
         return model_dir
     
     def prepare_audio(self, input_path, output_path):
         """准备音频：转换为 16kHz 单声道 WAV 格式"""
-        print(f"🎵 准备音频: {input_path.name}")
+        self.beautifier.print_info(f"准备音频: {input_path.name}", "🎵")
         
         # 使用 ffmpeg 转换音频
         cmd = [
@@ -229,19 +260,19 @@ class LongVideoTranscriber:
         
         try:
             subprocess.run(cmd, capture_output=True, text=True, check=True)
-            print(f"✅ 音频准备完成")
+            self.beautifier.print_success("音频准备完成")
             return True
         except subprocess.CalledProcessError as e:
-            print(f"❌ 音频转换失败: {e.stderr}")
+            self.beautifier.print_error(f"音频转换失败: {e.stderr}")
             return False
     
     def load_silero_vad(self):
         """加载 Silero VAD 模型"""
-        print("🔄 加载 VAD 模型...")
+        self.beautifier.print_info("加载 VAD 模型...", "🔄")
         
         # 方法1: 使用 pip 安装的 silero-vad 包（推荐）
         try:
-            print("📦 尝试使用 silero-vad 包...")
+            self.beautifier.print_info("尝试使用 silero-vad 包...", "📦")
             from silero_vad import load_silero_vad, get_speech_timestamps, read_audio
             
             model = load_silero_vad()
@@ -250,18 +281,18 @@ class LongVideoTranscriber:
             def save_audio(path, tensor, sampling_rate):
                 torchaudio.save(path, tensor, sampling_rate)
             
-            print("✅ VAD 模型加载成功 (silero-vad 包)")
+            self.beautifier.print_success("VAD 模型加载成功 (silero-vad 包)")
             return model, get_speech_timestamps, read_audio, save_audio
             
         except ImportError as e:
-            print(f"❌ silero-vad 包未安装: {e}")
+            self.beautifier.print_error(f"silero-vad 包未安装: {e}")
         except Exception as e:
-            print(f"❌ silero-vad 包加载失败: {str(e)}")
+            self.beautifier.print_error(f"silero-vad 包加载失败: {str(e)}")
         
         # 方法2: 尝试从 torch.hub 加载
         for attempt in range(2):
             try:
-                print(f"📁 尝试从 torch.hub 加载 (尝试 {attempt + 1}/2)...")
+                self.beautifier.print_info(f"尝试从 torch.hub 加载 (尝试 {attempt + 1}/2)...", "📁")
                 model, utils = torch.hub.load(
                     repo_or_dir='snakers4/silero-vad',
                     model='silero_vad',
@@ -271,11 +302,11 @@ class LongVideoTranscriber:
                 (get_speech_timestamps, save_audio, read_audio, 
                  VADIterator, collect_chunks) = utils
                 
-                print("✅ VAD 模型加载成功 (torch.hub)")
+                self.beautifier.print_success("VAD 模型加载成功 (torch.hub)")
                 return model, get_speech_timestamps, read_audio, save_audio
                 
             except Exception as e:
-                print(f"❌ torch.hub 加载失败 (尝试 {attempt + 1}/2): {str(e)}")
+                self.beautifier.print_error(f"torch.hub 加载失败 (尝试 {attempt + 1}/2): {str(e)}")
                 if attempt == 0:
                     time.sleep(3)
         
@@ -284,10 +315,15 @@ class LongVideoTranscriber:
     
     def slice_audio_with_vad(self, audio_path, output_dir):
         """使用 VAD 切分音频"""
-        print(f"✂️ 开始切分音频...")
+        self.beautifier.print_section("语音活动检测 (VAD)", "✂️")
+        
+        # 使用动画显示加载过程
+        spinner = self.beautifier.create_spinner("正在加载 VAD 模型...")
+        spinner.start()
         
         # 加载 VAD 模型
         vad_model, get_speech_timestamps, read_audio, save_audio = self.load_silero_vad()
+        spinner.stop(success_msg="VAD 模型加载成功！")
         
         # 读取音频
         wav = read_audio(str(audio_path))
@@ -308,10 +344,10 @@ class LongVideoTranscriber:
             ts['end'] = ts['end'] / 16000.0
         
         if not speech_timestamps:
-            print("❌ 没有检测到语音段")
+            self.beautifier.print_error("没有检测到语音段")
             return []
         
-        print(f"✅ 检测到 {len(speech_timestamps)} 个初始语音段")
+        self.beautifier.print_success(f"检测到 {len(speech_timestamps)} 个初始语音段")
         
         # 合并和切分语音段
         segments = []
@@ -338,11 +374,14 @@ class LongVideoTranscriber:
         if current_segment:
             segments.append(current_segment)
         
-        print(f"✅ 合并后得到 {len(segments)} 个语音段")
+        self.beautifier.print_success(f"合并后得到 {len(segments)} 个语音段")
         
         # 保存音频段
         segment_files = []
         waveform, sample_rate = torchaudio.load(str(audio_path))
+        
+        # 创建进度条
+        progress_bar = self.beautifier.create_progress_bar(len(segments), "保存音频片段")
         
         for i, segment in enumerate(segments):
             start_sample = int(segment['start'] * sample_rate)
@@ -360,36 +399,39 @@ class LongVideoTranscriber:
                 'end': segment['end'],
                 'duration': segment['end'] - segment['start']
             })
+            
+            # 更新进度条
+            progress_bar.update(i + 1, f"片段 {i+1}/{len(segments)}")
         
         # 保存分段信息
         segments_info_path = output_dir / "segments.json"
         with open(segments_info_path, 'w', encoding='utf-8') as f:
             json.dump(segment_files, f, ensure_ascii=False, indent=2)
         
-        print(f"✅ 音频切分完成，共 {len(segment_files)} 个片段")
+        self.beautifier.print_success(f"音频切分完成，共 {len(segment_files)} 个片段")
         return segment_files
     
     def batch_transcribe(self, segments_dir, model_dir):
         """智能批量转写音频片段"""
-        print("\n🎤 开始智能批量转写...")
+        self.beautifier.print_section("开始智能批量转写", "🎤")
         
         # 验证分段目录和文件
         if not segments_dir.exists():
-            print(f"❌ 分段目录不存在: {segments_dir}")
+            self.beautifier.print_error(f"分段目录不存在: {segments_dir}")
             return None
         
         segments_info_path = segments_dir / "segments.json"
         if not segments_info_path.exists():
-            print(f"❌ 分段信息文件不存在: {segments_info_path}")
+            self.beautifier.print_error(f"分段信息文件不存在: {segments_info_path}")
             return None
         
         # 读取分段信息
         try:
             with open(segments_info_path, 'r', encoding='utf-8') as f:
                 segments = json.load(f)
-            print(f"📋 加载分段信息: {len(segments)} 个片段")
+            self.beautifier.print_info(f"加载分段信息: {len(segments)} 个片段", "📋")
         except Exception as e:
-            print(f"❌ 读取分段信息失败: {e}")
+            self.beautifier.print_error(f"读取分段信息失败: {e}")
             return None
         
         # 验证分段文件是否存在
@@ -404,26 +446,26 @@ class LongVideoTranscriber:
                 missing_files.append(segment['file'])
         
         if missing_files:
-            print(f"⚠️ 警告: {len(missing_files)} 个分段文件不存在")
+            self.beautifier.print_warning(f"{len(missing_files)} 个分段文件不存在")
             if len(missing_files) <= 5:
                 for f in missing_files:
-                    print(f"  - {f}")
+                    self.beautifier.print_info(f"  - {f}", "")
             else:
                 for f in missing_files[:3]:
-                    print(f"  - {f}")
-                print(f"  ... 还有 {len(missing_files) - 3} 个文件")
+                    self.beautifier.print_info(f"  - {f}", "")
+                self.beautifier.print_info(f"  ... 还有 {len(missing_files) - 3} 个文件", "")
         
         if not valid_segments:
-            print("❌ 没有有效的分段文件")
+            self.beautifier.print_error("没有有效的分段文件")
             return None
         
-        print(f"✅ 找到 {len(valid_segments)} 个有效分段文件")
+        self.beautifier.print_success(f"找到 {len(valid_segments)} 个有效分段文件")
         segments = valid_segments
         
         # 使用智能模型加载器
         self.model = self.smart_loader.load_model(self.model_type, model_dir)
         if not self.model:
-            print("❌ 模型加载失败")
+            self.beautifier.print_error("模型加载失败")
             return None
         
         # 优化模型以进行推理
@@ -431,7 +473,7 @@ class LongVideoTranscriber:
         
         # 获取智能解码配置
         decode_config = self.smart_loader.get_transcribe_config()
-        print(f"🎯 解码配置: {decode_config}")
+        self.beautifier.print_info(f"解码配置: {decode_config}", "🎯")
         
         # 获取并行处理配置
         strategy = self.hardware_manager.get_optimal_config()['strategy']
@@ -457,12 +499,17 @@ class LongVideoTranscriber:
                 # 内存使用估算
                 memory_est = cpu_optimizer.estimate_memory_usage("llm", max_workers)
                 
-                print(f"🚀 LLM GPU辅助模式优化:")
-                print(f"   - 分段数: {segment_count}")
-                print(f"   - 并行线程: {max_workers} (原2个，现优化为{max_workers}个)")
-                print(f"   - 预估内存: {memory_est['total_gb']:.1f}GB / {memory_est['available_gb']:.1f}GB ({memory_est['usage_percent']:.1f}%)")
-                print(f"   - CPU配置: i9-14900KF (24栃32线程)")
-                print("📌 优化策略: 编码器在GPU，LLM主体在CPU，使用动态并行度调整")
+                self.beautifier.print_model_config("llm", {
+                    "max_workers": max_workers,
+                    "batch_size": batch_size,
+                    "memory_usage": memory_est['total_gb']
+                })
+                self.beautifier.print_info(f"🚀 LLM GPU辅助模式优化:")
+                self.beautifier.print_info(f"   - 分段数: {segment_count}")
+                self.beautifier.print_info(f"   - 并行线程: {max_workers} (原2个，现优化为{max_workers}个)")
+                self.beautifier.print_info(f"   - 预估内存: {memory_est['total_gb']:.1f}GB / {memory_est['available_gb']:.1f}GB ({memory_est['usage_percent']:.1f}%)")
+                self.beautifier.print_info(f"   - CPU配置: i9-14900KF (24栃32线程)")
+                self.beautifier.print_info("📌 优化策略: 编码器在GPU，LLM主体在CPU，使用动态并行度调整")
                 
                 # 启用预读取优化
                 self.prefetch_segments = opt_config["memory_config"]["prefetch_segments"]
@@ -472,9 +519,9 @@ class LongVideoTranscriber:
                 max_workers = 1
                 batch_size = 1
                 if segment_count <= 10:
-                    print(f"⚠️ LLM 串行处理: 分段数较少({segment_count}个)，使用串行处理")
+                    self.beautifier.print_warning(f"LLM 串行处理: 分段数较少({segment_count}个)，使用串行处理")
                 else:
-                    print("⚠️ LLM 纯CPU模式，使用串行处理以确保稳定性")
+                    self.beautifier.print_warning("LLM 纯CPU模式，使用串行处理以确保稳定性")
         else:
             # AED 模型优化
             cpu_optimizer = CPUOptimizationConfig()
@@ -483,12 +530,12 @@ class LongVideoTranscriber:
             max_workers = opt_config["max_workers"]
             batch_size = opt_config["batch_size"]
             
-            print(f"🔧 AED 智能并行优化:")
-            print(f"   - 分段数: {segment_count}")
-            print(f"   - 并行线程: {max_workers}")
-            print(f"   - 批处理大小: {batch_size}")
+            self.beautifier.print_info("AED 智能并行优化:", "🔧")
+            self.beautifier.print_info(f"   - 分段数: {segment_count}", "")
+            self.beautifier.print_info(f"   - 并行线程: {max_workers}", "")
+            self.beautifier.print_info(f"   - 批处理大小: {batch_size}", "")
         
-        print(f"🔧 处理配置: {max_workers} 线程, 批次大小: {batch_size}")
+        self.beautifier.print_info(f"处理配置: {max_workers} 线程, 批次大小: {batch_size}", "🔧")
         
         # 准备音频片段路径
         segment_paths = [segments_dir / segment['file'] for segment in segments]
@@ -504,7 +551,7 @@ class LongVideoTranscriber:
         # 预读取优化（如果启用）
         audio_cache = {}
         if hasattr(self, 'prefetch_segments') and self.prefetch_segments > 0:
-            print(f"📥 启用预读取优化，预加载 {self.prefetch_segments} 个音频段...")
+            self.beautifier.print_info(f"启用预读取优化，预加载 {self.prefetch_segments} 个音频段...", "📥")
             from concurrent.futures import ThreadPoolExecutor
             
             def prefetch_audio(idx):
@@ -525,7 +572,7 @@ class LongVideoTranscriber:
             try:
                 # 检查文件是否存在
                 if not segment_path.exists():
-                    print(f"⚠️ 跳过不存在的文件: {segment_path.name}")
+                    self.beautifier.print_warning(f"跳过不存在的文件: {segment_path.name}")
                     return None
                 
                 # 找到对应的 segment 信息
@@ -536,7 +583,7 @@ class LongVideoTranscriber:
                         break
                 
                 if not segment_info:
-                    print(f"⚠️ 找不到分段信息: {segment_path.name}")
+                    self.beautifier.print_warning(f"找不到分段信息: {segment_path.name}")
                     return None
                 
                 uttid = f"segment_{segment_info['index']:03d}"
@@ -573,11 +620,11 @@ class LongVideoTranscriber:
                         'process_time': process_time
                     }
                 else:
-                    print(f"⚠️ 模型转录无结果: {segment_path.name}")
+                    self.beautifier.print_warning(f"模型转录无结果: {segment_path.name}")
                     return None
                 
             except Exception as e:
-                print(f"❌ 转录片段失败 {segment_path.name}: {str(e)}")
+                self.beautifier.print_error(f"转录片段失败 {segment_path.name}: {str(e)}")
                 import traceback
                 traceback.print_exc()
                 return None
@@ -585,20 +632,30 @@ class LongVideoTranscriber:
         # 根据模型类型选择处理方式
         if max_workers == 1:
             # 串行处理
-            print(f"🚀 串行转写 {len(segment_paths)} 个片段...")
+            self.beautifier.print_info(f"串行转写 {len(segment_paths)} 个片段...", "🚀")
             results = []
+            
+            # 创建进度条
+            progress_bar = self.beautifier.create_progress_bar(len(segment_paths), "转写进度")
+            
             for i, segment_path in enumerate(segment_paths):
-                print(f"处理片段 {i+1}/{len(segment_paths)}: {segment_path.name}")
+                # 更新进度条
+                progress_bar.update(i, f"处理: {segment_path.name}")
+                
                 result = transcribe_single_segment(segment_path)
                 if result:
                     results.append(result)
+                    
                 # 定期清理内存
                 if (i + 1) % 10 == 0:
                     import gc
                     gc.collect()
+            
+            # 完成进度条
+            progress_bar.update(len(segment_paths), "转写完成！")
         else:
             # 并行处理
-            print(f"🚀 使用 {max_workers} 线程并行转写 {len(segment_paths)} 个片段...")
+            self.beautifier.print_info(f"使用 {max_workers} 线程并行转写 {len(segment_paths)} 个片段...", "🚀")
             processor = AudioBatchProcessor(max_workers=max_workers)
             results = processor.process_audio_segments(
                 segment_paths, 
@@ -616,13 +673,13 @@ class LongVideoTranscriber:
                     json.dump(results, f, ensure_ascii=False, indent=2)
                 
                 total = len(segments)
-                print(f"\n✅ 智能批量转写完成: {len(results)}/{total} 成功")
+                self.beautifier.print_success(f"智能批量转写完成: {len(results)}/{total} 成功")
                 return results
             except Exception as e:
-                print(f"❌ 保存转写结果失败: {e}")
+                self.beautifier.print_error(f"保存转写结果失败: {e}")
                 return results  # 返回结果但记录保存失败
         else:
-            print("\n❌ 没有成功转写的片段")
+            self.beautifier.print_error("没有成功转写的片段")
             return None
     
     def generate_unique_filename(self, base_path, extension):
@@ -638,7 +695,7 @@ class LongVideoTranscriber:
     
     def concatenate_results(self, results, input_filename):
         """拼接转写结果"""
-        print("\n📝 拼接转写结果...")
+        self.beautifier.print_section("拼接转写结果", "📝")
         
         # 按时间排序
         results.sort(key=lambda x: x['start'])
@@ -663,7 +720,7 @@ class LongVideoTranscriber:
             f.write(f"处理时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write("=" * 60 + "\n\n")
             f.write(continuous_text)
-        print(f"✅ 生成纯文本: {txt_path.name}")
+        self.beautifier.print_success(f"生成纯文本: {txt_path.name}")
         
         # 生成带时间戳的文本
         timestamp_text = []
@@ -677,7 +734,7 @@ class LongVideoTranscriber:
         timestamp_path = self.generate_unique_filename(output_base, "_时间戳.txt")
         with open(timestamp_path, 'w', encoding='utf-8') as f:
             f.write('\n'.join(timestamp_text))
-        print(f"✅ 生成时间戳文本: {timestamp_path.name}")
+        self.beautifier.print_success(f"生成时间戳文本: {timestamp_path.name}")
         
         # 生成 SRT 字幕
         srt_lines = []
@@ -692,7 +749,7 @@ class LongVideoTranscriber:
         srt_path = self.generate_unique_filename(output_base, ".srt")
         with open(srt_path, 'w', encoding='utf-8') as f:
             f.write('\n'.join(srt_lines))
-        print(f"✅ 生成字幕文件: {srt_path.name}")
+        self.beautifier.print_success(f"生成字幕文件: {srt_path.name}")
         
         # 生成统计信息
         total_duration = results[-1]['end'] if results else 0
@@ -713,16 +770,17 @@ class LongVideoTranscriber:
         with open(stats_path, 'w', encoding='utf-8') as f:
             json.dump(stats, f, ensure_ascii=False, indent=2)
         
-        print(f"\n📊 统计信息:")
-        print(f"   总时长: {stats['total_duration_formatted']}")
-        print(f"   处理时间: {total_process_time:.2f}s")
-        print(f"   平均 RTF: {avg_rtf:.4f}")
-        print(f"   总字符数: {stats['total_characters']}")
+        self.beautifier.print_stats({
+            "总时长": stats['total_duration_formatted'],
+            "处理时间": f"{total_process_time:.2f}s",
+            "平均 RTF": avg_rtf,
+            "总字符数": stats['total_characters']
+        })
         
         # 标点恢复处理
         if self.enable_punctuation:
             try:
-                print(f"\n🔤 开始标点恢复处理...")
+                self.beautifier.print_section("开始标点恢复处理", "🔤")
                 
                 # 初始化标点恢复器（延迟加载）
                 if self.punctuation_restorer is None:
@@ -743,7 +801,7 @@ class LongVideoTranscriber:
                     f.write(f"处理时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                     f.write("=" * 60 + "\n\n")
                     f.write(punctuated_text)
-                print(f"✅ 生成带标点文本: {punctuated_txt_path.name}")
+                self.beautifier.print_success(f"生成带标点文本: {punctuated_txt_path.name}")
                 
                 # 生成带标点的 SRT 字幕
                 # 将带标点的文本按原始分段重新分配
@@ -777,12 +835,12 @@ class LongVideoTranscriber:
                 punctuated_srt_path = self.generate_unique_filename(output_base, "_标点.srt")
                 with open(punctuated_srt_path, 'w', encoding='utf-8') as f:
                     f.write('\n'.join(punctuated_srt_lines))
-                print(f"✅ 生成带标点字幕: {punctuated_srt_path.name}")
+                self.beautifier.print_success(f"生成带标点字幕: {punctuated_srt_path.name}")
                 
                 # 如果启用了分段功能
                 if self.enable_paragraph and punctuated_text:
                     try:
-                        print(f"\n📑 开始自然段分段处理...")
+                        self.beautifier.print_section("开始自然段分段处理", "📑")
                         
                         # 初始化分段器
                         if self.paragraph_segmenter is None:
@@ -810,8 +868,8 @@ class LongVideoTranscriber:
                                 # 使用缩进表示段落开始，而不是标号
                                 f.write(f"    {para}\n\n")  # 段首缩进4个空格
                         
-                        print(f"✅ 生成自然段文件: {paragraph_txt_path.name}")
-                        print(f"   共分为 {len(paragraphs)} 个自然段")
+                        self.beautifier.print_success(f"生成自然段文件: {paragraph_txt_path.name}")
+                        self.beautifier.print_info(f"   共分为 {len(paragraphs)} 个自然段")
                         
                         # 同时生成一个更精美的 Markdown 格式版本
                         markdown_path = self.generate_unique_filename(output_base, "_段落.md")
@@ -827,15 +885,15 @@ class LongVideoTranscriber:
                             for i, para in enumerate(paragraphs, 1):
                                 f.write(f"{para}\n\n")
                         
-                        print(f"✅ 生成 Markdown 文件: {markdown_path.name}")
+                        self.beautifier.print_success(f"生成 Markdown 文件: {markdown_path.name}")
                         
                     except Exception as e:
-                        print(f"⚠️ 分段处理失败: {str(e)}")
-                        print("   将保留带标点版本")
+                        self.beautifier.print_warning(f"分段处理失败: {str(e)}")
+                        self.beautifier.print_info("   将保留带标点版本")
                 
             except Exception as e:
-                print(f"⚠️ 标点恢复失败: {str(e)}")
-                print("   将保留无标点版本")
+                self.beautifier.print_warning(f"标点恢复失败: {str(e)}")
+                self.beautifier.print_info("   将保留无标点版本")
     
     def seconds_to_srt_time(self, seconds):
         """将秒数转换为 SRT 时间格式"""
@@ -846,9 +904,7 @@ class LongVideoTranscriber:
     
     def process_long_video(self, input_path):
         """处理单个长视频文件的完整流程"""
-        print(f"\n{'='*60}")
-        print(f"🎬 处理文件: {input_path.name}")
-        print(f"{'='*60}")
+        self.beautifier.print_header(f"处理文件: {input_path.name}", "")
         
         # 创建临时工作目录
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -860,19 +916,19 @@ class LongVideoTranscriber:
         
         try:
             # 步骤1：准备音频
-            print("\n[步骤 1/4] 准备音频...")
+            self.beautifier.print_step(1, 4, "准备音频")
             prepared_audio = work_dir / "prepared_audio.wav"
             if not self.prepare_audio(input_path, prepared_audio):
                 return False
             
             # 步骤2：VAD 切片
-            print("\n[步骤 2/4] VAD 语音检测和切片...")
+            self.beautifier.print_step(2, 4, "VAD 语音检测和切片")
             segments = self.slice_audio_with_vad(prepared_audio, segments_dir)
             if not segments:
                 return False
             
             # 步骤3：批量转写
-            print("\n[步骤 3/4] 批量转写...")
+            self.beautifier.print_step(3, 4, "批量转写")
             model_dir = self.get_model_dir()
             if not model_dir:
                 return False
@@ -882,10 +938,10 @@ class LongVideoTranscriber:
                 return False
             
             # 步骤4：拼接结果
-            print("\n[步骤 4/4] 拼接结果...")
+            self.beautifier.print_step(4, 4, "拼接结果")
             self.concatenate_results(results, input_path.name)
             
-            print(f"\n✅ 处理完成！")
+            self.beautifier.print_success("处理完成！")
             
             # 清理临时文件（可选）
             # shutil.rmtree(work_dir)
@@ -893,7 +949,7 @@ class LongVideoTranscriber:
             return True
             
         except Exception as e:
-            print(f"\n❌ 处理出错: {str(e)}")
+            self.beautifier.print_error(f"处理出错: {str(e)}")
             import traceback
             traceback.print_exc()
             return False
@@ -904,8 +960,7 @@ class LongVideoTranscriber:
     
     def run(self):
         """运行长视频批量处理"""
-        print("🔥 FireRedASR 长视频转文字批量处理系统")
-        print("=" * 60)
+        self.beautifier.print_header("FireRedASR 长视频转文字批量处理系统", "")
         
         # 检查依赖
         if not self.check_dependencies():
@@ -920,10 +975,10 @@ class LongVideoTranscriber:
         try:
             confirm = input(f"\n是否处理这 {len(files)} 个长视频文件? (y/n): ").strip().lower()
             if confirm not in ['y', 'yes', '是']:
-                print("👋 用户取消操作")
+                self.beautifier.print_warning("用户取消操作", "👋")
                 return
         except KeyboardInterrupt:
-            print("\n\n👋 用户取消操作")
+            self.beautifier.print_warning("\n用户取消操作", "👋")
             return
         
         # 询问 VAD 参数
@@ -934,15 +989,15 @@ class LongVideoTranscriber:
                 self.min_silence_duration_ms = int(input("最小静音间隔（毫秒）[默认: 500]: ") or "500")
                 self.min_speech_duration_ms = int(input("最小语音段长度（毫秒）[默认: 1000]: ") or "1000")
         except KeyboardInterrupt:
-            print("\n\n👋 用户取消操作")
+            self.beautifier.print_warning("\n用户取消操作", "👋")
             return
         
         # 批量处理
-        print(f"\n🚀 开始批量处理...")
+        self.beautifier.print_section("开始批量处理", "🚀")
         success_count = 0
         
         for i, file_path in enumerate(files, 1):
-            print(f"\n\n[{i}/{len(files)}] 处理进度")
+            self.beautifier.print_info(f"\n[{i}/{len(files)}] 处理进度", "📄")
             if self.process_long_video(file_path):
                 success_count += 1
             
@@ -951,17 +1006,24 @@ class LongVideoTranscriber:
                 try:
                     cont = input("\n继续处理下一个文件? (y/n) [默认: y]: ").strip().lower()
                     if cont in ['n', 'no', '否']:
-                        print("👋 用户停止处理")
+                        self.beautifier.print_warning("用户停止处理", "👋")
                         break
                 except KeyboardInterrupt:
-                    print("\n\n👋 用户中断处理")
+                    self.beautifier.print_warning("\n用户中断处理", "👋")
                     break
         
         # 总结
-        print("\n" + "=" * 60)
-        print(f"✅ 批量处理完成!")
-        print(f"📊 总计: {len(files)} 个文件, 成功: {success_count} 个")
-        print(f"📁 结果保存在: {self.output_dir}")
+        self.beautifier.print_summary(
+            "批量处理完成",
+            {
+                "处理文件数": len(files),
+                "成功转写": success_count,
+                "失败文件": len(files) - success_count,
+                "输出目录": str(self.output_dir),
+                "处理时间": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            },
+            style="double"
+        )
         
         # 清理临时目录
         if self.temp_dir.exists() and not any(self.temp_dir.iterdir()):
