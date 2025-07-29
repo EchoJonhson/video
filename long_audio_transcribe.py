@@ -337,6 +337,26 @@ class LongAudioTranscriber:
                 f.write(f"FireRedASR 长音频转写结果\n")
                 f.write(f"处理时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write(f"使用模型: FireRedASR-{self.model_type.upper()}\n")
+                f.write(f"总时长: {self.format_time(sum(r['duration'] for r in valid_results))}\n")
+                f.write("=" * 60 + "\n\n")
+                
+                # 将所有文本连接成连续段落
+                all_text = []
+                for result in valid_results:
+                    text = result['text'].strip()
+                    if text:  # 只添加非空文本
+                        all_text.append(text)
+                
+                # 使用空格连接，形成连续文本
+                continuous_text = ' '.join(all_text)
+                f.write(continuous_text)
+            
+            # 同时保存一个带时间戳的版本（可选）
+            timestamp_txt_path = self.output_dir / "full_transcript_with_timestamps.txt"
+            with open(timestamp_txt_path, 'w', encoding='utf-8') as f:
+                f.write(f"FireRedASR 长音频转写结果（带时间戳）\n")
+                f.write(f"处理时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"使用模型: FireRedASR-{self.model_type.upper()}\n")
                 f.write(f"总分段数: {len(valid_results)}\n")
                 f.write("=" * 60 + "\n\n")
                 
@@ -350,6 +370,9 @@ class LongAudioTranscriber:
                     end_str = self.format_time(end_time)
                     
                     f.write(f"[{start_str} - {end_str}] {text}\n\n")
+            
+            output_files.append(timestamp_txt_path)
+            print(f"📄 带时间戳文本文件: {timestamp_txt_path}")
             
             output_files.append(txt_path)
             print(f"📄 纯文本文件: {txt_path}")
@@ -421,29 +444,14 @@ class LongAudioTranscriber:
                 if 'txt' in output_formats:
                     punctuated_txt_path = self.output_dir / "full_transcript_with_punctuation.txt"
                     with open(punctuated_txt_path, 'w', encoding='utf-8') as f:
-                        f.write(f"FireRedASR 长音频转写结果（带标点）\n")
+                        f.write(f"FireRedASR 长音频转写结果（带标点符号）\n")
                         f.write(f"处理时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                         f.write(f"使用模型: FireRedASR-{self.model_type.upper()}\n")
-                        f.write(f"总分段数: {len(valid_results)}\n")
+                        f.write(f"总时长: {self.format_time(sum(r['duration'] for r in valid_results))}\n")
                         f.write("=" * 60 + "\n\n")
                         
-                        # 将带标点的文本按原始分段重新分配
-                        punctuated_lines = punctuated_text.split('\n')
-                        for i, result in enumerate(valid_results):
-                            start_time = result['start_time']
-                            end_time = result['end_time']
-                            
-                            # 尝试使用对应的带标点文本
-                            if i < len(punctuated_lines):
-                                text = punctuated_lines[i]
-                            else:
-                                text = result['text']
-                            
-                            # 格式化时间
-                            start_str = self.format_time(start_time)
-                            end_str = self.format_time(end_time)
-                            
-                            f.write(f"[{start_str} - {end_str}] {text}\n\n")
+                        # 直接写入带标点的连续文本
+                        f.write(punctuated_text)
                     
                     output_files.append(punctuated_txt_path)
                     print(f"📄 带标点文本文件: {punctuated_txt_path}")
@@ -493,14 +501,34 @@ class LongAudioTranscriber:
                         if 'txt' in output_formats:
                             paragraph_txt_path = self.output_dir / "full_transcript_paragraphs.txt"
                             with open(paragraph_txt_path, 'w', encoding='utf-8') as f:
-                                f.write(f"FireRedASR 长音频转写结果（自然段格式）\n")
-                                f.write(f"处理时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                                f.write(f"FireRedASR 长音频转写结果\n")
+                                f.write(f"\n处理时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                                 f.write(f"使用模型: FireRedASR-{self.model_type.upper()}\n")
+                                f.write(f"总时长: {self.format_time(sum(r['duration'] for r in valid_results))}\n")
                                 f.write(f"段落数: {len(paragraphs)}\n")
-                                f.write("=" * 60 + "\n\n")
+                                f.write("\n" + "=" * 60 + "\n\n")
                                 
+                                # 使用书籍排版格式
                                 for i, para in enumerate(paragraphs, 1):
-                                    f.write(f"【第{i}段】\n{para}\n\n")
+                                    # 段首缩进4个空格
+                                    f.write(f"    {para}\n\n")
+                            
+                            # 同时生成 Markdown 格式
+                            markdown_path = self.output_dir / "full_transcript_paragraphs.md"
+                            with open(markdown_path, 'w', encoding='utf-8') as f:
+                                # Markdown 头部
+                                f.write(f"# 音频转写文稿\n\n")
+                                f.write(f"**处理时间:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \n")
+                                f.write(f"**音频时长:** {self.format_time(sum(r['duration'] for r in valid_results))}  \n")
+                                f.write(f"**段落数量:** {len(paragraphs)}  \n\n")
+                                f.write("---\n\n")
+                                
+                                # 正文内容
+                                for i, para in enumerate(paragraphs, 1):
+                                    f.write(f"{para}\n\n")
+                            
+                            output_files.append(markdown_path)
+                            print(f"📄 Markdown 文件: {markdown_path}")
                             
                             output_files.append(paragraph_txt_path)
                             print(f"📄 自然段格式文件: {paragraph_txt_path}")

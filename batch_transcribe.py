@@ -326,18 +326,34 @@ class BatchTranscriber:
                         # 执行分段
                         paragraphs = self.paragraph_segmenter.segment_paragraphs(merged_text)
                         
-                        # 保存分段结果
+                        # 保存分段结果（优化的书籍排版格式）
                         paragraph_txt_file = self.output_dir / f"transcription_results_{timestamp}_paragraphs.txt"
                         with open(paragraph_txt_file, 'w', encoding='utf-8') as f:
-                            f.write(f"FireRedASR 批量识别结果（自然段格式）\n")
-                            f.write(f"处理时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                            f.write(f"FireRedASR 批量识别结果\n")
+                            f.write(f"\n处理时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                             f.write(f"使用模型: {self.model_type.upper()}\n")
                             f.write(f"文件数: {len(punctuated_results)}\n")
                             f.write(f"段落数: {len(paragraphs)}\n")
-                            f.write("=" * 60 + "\n\n")
+                            f.write("\n" + "=" * 60 + "\n\n")
                             
+                            # 使用书籍排版格式
                             for i, para in enumerate(paragraphs, 1):
-                                f.write(f"【第{i}段】\n{para}\n\n")
+                                # 段首缩进4个空格
+                                f.write(f"    {para}\n\n")
+                        
+                        # 同时生成 Markdown 格式
+                        markdown_file = self.output_dir / f"transcription_results_{timestamp}_paragraphs.md"
+                        with open(markdown_file, 'w', encoding='utf-8') as f:
+                            # Markdown 头部
+                            f.write(f"# 批量识别文稿\n\n")
+                            f.write(f"**处理时间:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \n")
+                            f.write(f"**文件数量:** {len(punctuated_results)}  \n")
+                            f.write(f"**段落数量:** {len(paragraphs)}  \n\n")
+                            f.write("---\n\n")
+                            
+                            # 正文内容
+                            for i, para in enumerate(paragraphs, 1):
+                                f.write(f"{para}\n\n")
                         
                         print(f"📄 自然段格式文件: {paragraph_txt_file}")
                         print(f"   共分为 {len(paragraphs)} 个自然段")

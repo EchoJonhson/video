@@ -611,14 +611,22 @@ class LongVideoTranscriber:
         base_name = Path(input_filename).stem
         output_base = self.output_dir / base_name
         
-        # 生成纯文本
+        # 生成纯文本（连续段落格式，更适合阅读）
         full_text = []
         for result in results:
-            full_text.append(result['text'])
+            text = result['text'].strip()
+            if text:  # 只添加非空文本
+                full_text.append(text)
+        
+        # 将文本拼接成连续段落，而不是逐行显示
+        continuous_text = ' '.join(full_text)
         
         txt_path = self.generate_unique_filename(output_base, ".txt")
         with open(txt_path, 'w', encoding='utf-8') as f:
-            f.write('\n'.join(full_text))
+            f.write(f"FireRedASR 视频转写结果\n")
+            f.write(f"处理时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write("=" * 60 + "\n\n")
+            f.write(continuous_text)
         print(f"✅ 生成纯文本: {txt_path.name}")
         
         # 生成带时间戳的文本
@@ -692,9 +700,12 @@ class LongVideoTranscriber:
                 full_text_content = '\n'.join(full_text)
                 punctuated_text = self.punctuation_restorer.restore_punctuation(full_text_content)
                 
-                # 保存带标点的纯文本
+                # 保存带标点的纯文本（书籍格式）
                 punctuated_txt_path = self.generate_unique_filename(output_base, "_标点.txt")
                 with open(punctuated_txt_path, 'w', encoding='utf-8') as f:
+                    f.write(f"FireRedASR 视频转写结果（带标点符号）\n")
+                    f.write(f"处理时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write("=" * 60 + "\n\n")
                     f.write(punctuated_text)
                 print(f"✅ 生成带标点文本: {punctuated_txt_path.name}")
                 
@@ -747,19 +758,40 @@ class LongVideoTranscriber:
                         # 执行分段
                         paragraphs = self.paragraph_segmenter.segment_paragraphs(punctuated_text)
                         
-                        # 保存分段结果
+                        # 保存分段结果（优化的书籍排版格式）
                         paragraph_txt_path = self.generate_unique_filename(output_base, "_段落.txt")
                         with open(paragraph_txt_path, 'w', encoding='utf-8') as f:
-                            f.write(f"FireRedASR 视频转写结果（自然段格式）\n")
+                            # 文档头部信息
+                            f.write(f"FireRedASR 视频转写结果\n")
+                            f.write(f"\n文件: {base_name}\n")
                             f.write(f"处理时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                            f.write(f"总时长: {stats['total_duration_formatted']}\n")
                             f.write(f"段落数: {len(paragraphs)}\n")
-                            f.write("=" * 60 + "\n\n")
+                            f.write("\n" + "=" * 60 + "\n\n")
                             
+                            # 正文内容 - 自然的书籍排版
                             for i, para in enumerate(paragraphs, 1):
-                                f.write(f"【第{i}段】\n{para}\n\n")
+                                # 使用缩进表示段落开始，而不是标号
+                                f.write(f"    {para}\n\n")  # 段首缩进4个空格
                         
                         print(f"✅ 生成自然段文件: {paragraph_txt_path.name}")
                         print(f"   共分为 {len(paragraphs)} 个自然段")
+                        
+                        # 同时生成一个更精美的 Markdown 格式版本
+                        markdown_path = self.generate_unique_filename(output_base, "_段落.md")
+                        with open(markdown_path, 'w', encoding='utf-8') as f:
+                            # Markdown 头部
+                            f.write(f"# {base_name} - 转写文稿\n\n")
+                            f.write(f"**处理时间:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \n")
+                            f.write(f"**视频时长:** {stats['total_duration_formatted']}  \n")
+                            f.write(f"**段落数量:** {len(paragraphs)}  \n\n")
+                            f.write("---\n\n")
+                            
+                            # 正文内容
+                            for i, para in enumerate(paragraphs, 1):
+                                f.write(f"{para}\n\n")
+                        
+                        print(f"✅ 生成 Markdown 文件: {markdown_path.name}")
                         
                     except Exception as e:
                         print(f"⚠️ 分段处理失败: {str(e)}")
