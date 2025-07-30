@@ -18,7 +18,6 @@ FireRedASR 长视频转文字批量处理系统
 import os
 import sys
 import json
-import argparse
 import subprocess
 import shutil
 import tempfile
@@ -87,15 +86,15 @@ class LongVideoTranscriber:
         # 打印硬件配置
         self.hardware_manager.print_hardware_info()
         
-        # 标点恢复相关
+        # 标点恢复相关（基础功能，默认启用）
         self.enable_punctuation = True  # 默认启用标点恢复
         self.punctuation_restorer = None
         self.punctuation_model_dir = None
         self.punctuation_chunk_size = 256
         self.punctuation_stride = 128
         
-        # 分段相关
-        self.enable_paragraph = False  # 默认不启用分段
+        # 分段相关（基础功能，默认启用）
+        self.enable_paragraph = True  # 默认启用分段
         self.paragraph_segmenter = None
         self.paragraph_method = "rule"  # rule/semantic/hybrid
         self.min_paragraph_length = 50
@@ -958,6 +957,98 @@ class LongVideoTranscriber:
             if self.model:
                 self.model.feat_extractor.cleanup_temp_files()
     
+    def configure_processing_options(self):
+        """交互式配置处理选项"""
+        self.beautifier.print_section("配置处理选项", "⚙️")
+        
+        # 1. 选择模型
+        if not self.model_type:
+            model_dir = self.select_model()
+            if not model_dir:
+                return False
+        
+        # 2. 配置输出选项
+        self.beautifier.print_section("输出选项配置", "📝")
+        
+        # 标点恢复（默认启用）
+        self.beautifier.print_info("📌 标点恢复功能已默认启用（基础功能）")
+        
+        # 自然段分段（默认启用）
+        self.beautifier.print_info("📑 自然段分段功能已默认启用（基础功能）")
+        
+        # 询问是否需要自定义分段参数
+        try:
+            custom_paragraph = input("\n是否自定义分段参数? (y/n) [默认: n]: ").strip().lower()
+            if custom_paragraph in ['y', 'yes', '是']:
+                self.beautifier.print_info("分段方法选择：")
+                self.beautifier.print_info("  1. rule - 基于规则（默认，速度快）")
+                self.beautifier.print_info("  2. semantic - 基于语义（更智能）")
+                self.beautifier.print_info("  3. hybrid - 混合模式（平衡）")
+                
+                method_choice = input("请选择分段方法 (1/2/3) [默认: 1]: ").strip() or "1"
+                method_map = {"1": "rule", "2": "semantic", "3": "hybrid"}
+                self.paragraph_method = method_map.get(method_choice, "rule")
+                
+                self.min_paragraph_length = int(input("最小段落长度（字）[默认: 50]: ") or "50")
+                self.max_paragraph_length = int(input("最大段落长度（字）[默认: 500]: ") or "500")
+                
+                self.beautifier.print_success(f"分段参数已配置：{self.paragraph_method}方法，{self.min_paragraph_length}-{self.max_paragraph_length}字")
+        except KeyboardInterrupt:
+            self.beautifier.print_warning("\n用户取消操作", "👋")
+            return False
+        
+        # 3. 配置VAD参数
+        self.beautifier.print_section("语音检测参数", "🎯")
+        try:
+            # 提供预设选项
+            self.beautifier.print_info("选择音频类型以自动优化参数：")
+            self.beautifier.print_info("  1. 通用（默认设置）")
+            self.beautifier.print_info("  2. 课堂/演讲（长句子）")
+            self.beautifier.print_info("  3. 对话/访谈（短对话）")
+            self.beautifier.print_info("  4. 自定义参数")
+            
+            vad_choice = input("\n请选择 (1-4) [默认: 1]: ").strip() or "1"
+            
+            if vad_choice == "2":
+                # 课堂/演讲优化
+                self.max_speech_duration_s = 60
+                self.min_silence_duration_ms = 800
+                self.beautifier.print_success("已应用课堂/演讲优化参数")
+            elif vad_choice == "3":
+                # 对话优化
+                self.max_speech_duration_s = 20
+                self.min_silence_duration_ms = 200
+                self.beautifier.print_success("已应用对话/访谈优化参数")
+            elif vad_choice == "4":
+                # 自定义
+                self.max_speech_duration_s = int(input("最大语音段长度（秒）[默认: 30]: ") or "30")
+                self.min_silence_duration_ms = int(input("最小静音间隔（毫秒）[默认: 500]: ") or "500")
+                self.min_speech_duration_ms = int(input("最小语音段长度（毫秒）[默认: 1000]: ") or "1000")
+                self.beautifier.print_success("已应用自定义VAD参数")
+            else:
+                # 默认参数
+                self.beautifier.print_success("使用默认VAD参数")
+                
+        except KeyboardInterrupt:
+            self.beautifier.print_warning("\n用户取消操作", "👋")
+            return False
+        
+        # 显示最终配置
+        self.beautifier.print_section("最终配置", "✅")
+        config_summary = {
+            "模型类型": self.model_type.upper(),
+            "标点恢复": "已启用",
+            "自然段分段": f"已启用（{self.paragraph_method}方法）",
+            "段落长度": f"{self.min_paragraph_length}-{self.max_paragraph_length}字",
+            "VAD参数": f"最大{self.max_speech_duration_s}秒，静音{self.min_silence_duration_ms}ms"
+        }
+        
+        headers = ["配置项", "设置值"]
+        rows = [[k, v] for k, v in config_summary.items()]
+        self.beautifier.print_table(headers, rows)
+        
+        return True
+    
     def run(self):
         """运行长视频批量处理"""
         self.beautifier.print_header("FireRedASR 长视频转文字批量处理系统", "")
@@ -971,23 +1062,17 @@ class LongVideoTranscriber:
         if not self.display_files(files):
             return
         
-        # 用户确认
+        # 配置处理选项
+        if not self.configure_processing_options():
+            return
+        
+        # 最终确认
         try:
-            confirm = input(f"\n是否处理这 {len(files)} 个长视频文件? (y/n): ").strip().lower()
+            self.beautifier.print_section("准备开始处理", "🚀")
+            confirm = input(f"\n确认处理这 {len(files)} 个文件? (y/n): ").strip().lower()
             if confirm not in ['y', 'yes', '是']:
                 self.beautifier.print_warning("用户取消操作", "👋")
                 return
-        except KeyboardInterrupt:
-            self.beautifier.print_warning("\n用户取消操作", "👋")
-            return
-        
-        # 询问 VAD 参数
-        try:
-            custom = input("\n是否使用自定义 VAD 参数? (y/n) [默认: n]: ").strip().lower()
-            if custom in ['y', 'yes', '是']:
-                self.max_speech_duration_s = int(input("最大语音段长度（秒）[默认: 30]: ") or "30")
-                self.min_silence_duration_ms = int(input("最小静音间隔（毫秒）[默认: 500]: ") or "500")
-                self.min_speech_duration_ms = int(input("最小语音段长度（毫秒）[默认: 1000]: ") or "1000")
         except KeyboardInterrupt:
             self.beautifier.print_warning("\n用户取消操作", "👋")
             return
@@ -1031,53 +1116,7 @@ class LongVideoTranscriber:
 
 
 def main():
-    """主函数"""
-    parser = argparse.ArgumentParser(
-        description='FireRedASR 长视频转文字批量处理系统',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-示例:
-  %(prog)s                                # 交互式处理
-  %(prog)s --model_type llm               # 使用 LLM 模型
-  %(prog)s --max_duration 45              # 设置最大段长为 45 秒
-  %(prog)s --min_silence 300              # 设置最小静音为 300 毫秒
-        """
-    )
-    
-    parser.add_argument('--model_type', type=str, choices=['aed', 'llm'],
-                        help='模型类型（如不指定则交互式选择）')
-    parser.add_argument('--max_duration', type=int, default=30,
-                        help='最大语音段长度（秒）')
-    parser.add_argument('--min_silence', type=int, default=500,
-                        help='最小静音间隔（毫秒）')
-    parser.add_argument('--min_speech', type=int, default=1000,
-                        help='最小语音段长度（毫秒）')
-    
-    # 标点恢复相关参数
-    parser.add_argument('--enable-punctuation', action='store_true', default=True,
-                        help='启用标点恢复（默认启用）')
-    parser.add_argument('--disable-punctuation', action='store_true',
-                        help='禁用标点恢复')
-    parser.add_argument('--punctuation-model-dir', type=str,
-                        help='自定义标点恢复模型路径')
-    parser.add_argument('--punctuation-chunk-size', type=int, default=256,
-                        help='标点恢复文本块大小（默认: 256）')
-    parser.add_argument('--punctuation-stride', type=int, default=128,
-                        help='标点恢复滑动窗口步长（默认: 128）')
-    
-    # 分段相关参数
-    parser.add_argument('--enable-paragraph', action='store_true',
-                        help='启用自然段分段功能')
-    parser.add_argument('--paragraph-method', type=str, default='rule',
-                        choices=['rule', 'semantic', 'hybrid'],
-                        help='分段方法：rule（规则）、semantic（语义）、hybrid（混合）')
-    parser.add_argument('--min-paragraph-length', type=int, default=50,
-                        help='最小段落长度（默认: 50字）')
-    parser.add_argument('--max-paragraph-length', type=int, default=500,
-                        help='最大段落长度（默认: 500字）')
-    
-    args = parser.parse_args()
-    
+    """主函数 - 简化版，完全交互式"""
     # 检查是否在正确的目录
     if not Path("fireredasr").exists():
         print("❌ 错误: 请在 FireRedASR 项目根目录下运行此脚本")
@@ -1087,32 +1126,8 @@ def main():
     os.environ['PYTHONPATH'] = str(Path.cwd()) + ":" + os.environ.get('PYTHONPATH', '')
     
     try:
+        # 创建处理器并运行
         transcriber = LongVideoTranscriber()
-        
-        # 设置参数
-        if args.model_type:
-            transcriber.model_type = args.model_type
-        transcriber.max_speech_duration_s = args.max_duration
-        transcriber.min_silence_duration_ms = args.min_silence
-        transcriber.min_speech_duration_ms = args.min_speech
-        
-        # 设置标点恢复参数
-        if args.disable_punctuation:
-            transcriber.enable_punctuation = False
-        else:
-            transcriber.enable_punctuation = True
-        
-        if args.punctuation_model_dir:
-            transcriber.punctuation_model_dir = args.punctuation_model_dir
-        transcriber.punctuation_chunk_size = args.punctuation_chunk_size
-        transcriber.punctuation_stride = args.punctuation_stride
-        
-        # 设置分段参数
-        transcriber.enable_paragraph = args.enable_paragraph
-        transcriber.paragraph_method = args.paragraph_method
-        transcriber.min_paragraph_length = args.min_paragraph_length
-        transcriber.max_paragraph_length = args.max_paragraph_length
-        
         transcriber.run()
         
     except Exception as e:
