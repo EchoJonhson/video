@@ -209,8 +209,11 @@ class PunctuationRestorer:
             tokens = self.tokenizer.convert_ids_to_tokens(inputs["input_ids"][0])
             labels = predictions[0].cpu().numpy()
             
-            # 构建带标点的文本
+            # 构建带标点的文本 - 修复英文单词间隔问题
             result_chars = []
+            original_chars = list(text)  # 保留原始字符序列
+            char_index = 0
+            
             for token, label in zip(tokens, labels):
                 if token in ['[CLS]', '[SEP]', '[PAD]']:
                     continue
@@ -218,12 +221,26 @@ class PunctuationRestorer:
                 # 处理子词
                 if token.startswith('##'):
                     token = token[2:]
-                    
-                result_chars.append(token)
+                
+                # 跳过原始文本中的空格，但保留它们
+                while char_index < len(original_chars) and original_chars[char_index] == ' ':
+                    result_chars.append(' ')
+                    char_index += 1
+                
+                # 添加token字符
+                for char in token:
+                    if char_index < len(original_chars) and original_chars[char_index] == char:
+                        result_chars.append(char)
+                        char_index += 1
                 
                 # 添加标点
                 if label > 0 and label in self.label_map:
                     result_chars.append(self.label_map[label])
+            
+            # 添加剩余的空格
+            while char_index < len(original_chars) and original_chars[char_index] == ' ':
+                result_chars.append(' ')
+                char_index += 1
                     
             return ''.join(result_chars)
             
